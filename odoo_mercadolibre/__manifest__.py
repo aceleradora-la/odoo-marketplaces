@@ -7,8 +7,8 @@
         Módulo base para la integración con MercadoLibre.
         Soporta múltiples cuentas (App ID), autenticación OAuth 2.0.
     """,
-    'author': 'Ignacio',
-    'website': 'https://developers.mercadolibre.com.ar/',
+    'author': 'aceleradora.la',
+    'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
     'depends': ['base', 'sale_management', 'stock', 'account'],
     'data': [
