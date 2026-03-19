@@ -19,6 +19,8 @@
         'views/meli_category_views.xml',
         'views/product_template_views.xml',
         'views/meli_item_views.xml',
+        'views/sale_order_views.xml',
+        'views/res_partner_views.xml',
     ],
     'installable': True,
     'application': True,
