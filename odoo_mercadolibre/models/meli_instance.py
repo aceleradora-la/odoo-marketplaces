@@ -112,6 +112,17 @@ class MeliInstance(models.Model):
             self.write({'state': 'error'})
             raise UserError(_("Error getting token: %s") % response.text)
 
+    def action_reset_connection(self):
+        self.ensure_one()
+        self.write({
+            'state': 'draft',
+            'authorization_code': False,
+            'access_token': False,
+            'refresh_token': False,
+            'token_expiration': False,
+            'seller_id': False,
+        })
+
     def check_token_validity(self):
         """Called before API requests to ensure token is valid"""
         self.ensure_one()
