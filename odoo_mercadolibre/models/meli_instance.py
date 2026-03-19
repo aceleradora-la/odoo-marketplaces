@@ -2,6 +2,9 @@ from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 import requests
 import datetime
+import logging
+
+_logger = logging.getLogger(__name__)
 
 class MeliInstance(models.Model):
     _name = 'meli.instance'
@@ -21,6 +24,7 @@ class MeliInstance(models.Model):
     
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (ML Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    seller_id = fields.Char('Seller ID', readonly=True)
     
     state = fields.Selection([
         ('draft', 'Draft'),
@@ -60,8 +64,13 @@ class MeliInstance(models.Model):
             'redirect_uri': self.redirect_uri
         }
         
-        response = requests.post(url, headers=headers, data=data)
-        self._process_token_response(response)
+        try:
+            response = requests.post(url, headers=headers, data=data)
+            self._process_token_response(response)
+        except Exception as e:
+            self.write({'state': 'error'})
+            _logger.error(f"Error requesting ML token: {str(e)}")
+            raise UserError(_("Error requesting token: %s") % str(e))
 
     def action_refresh_token(self):
         for rec in self:
@@ -80,18 +89,24 @@ class MeliInstance(models.Model):
                 'refresh_token': rec.refresh_token
             }
             
-            response = requests.post(url, headers=headers, data=data)
-            rec._process_token_response(response)
+            try:
+                response = requests.post(url, headers=headers, data=data)
+                rec._process_token_response(response)
+            except Exception as e:
+                rec.write({'state': 'error'})
+                _logger.error(f"Error refreshing ML token for instance {rec.name}: {str(e)}")
 
     def _process_token_response(self, response):
         if response.status_code == 200:
             res_data = response.json()
             expires_in = res_data.get('expires_in', 21600)  # usually 6 hours
+            user_id = str(res_data.get('user_id', ''))
             self.write({
                 'access_token': res_data.get('access_token'),
                 'refresh_token': res_data.get('refresh_token'),
                 'token_expiration': fields.Datetime.now() + datetime.timedelta(seconds=expires_in),
                 'state': 'authenticated',
+                'seller_id': user_id,
             })
         else:
             self.write({'state': 'error'})
@@ -136,66 +151,97 @@ class MeliInstance(models.Model):
             if rec.state != 'authenticated':
                 continue
             
-            # Seller ID can be extracted from token or must be saved in instance.
-            # We can use /users/me to get seller_id.
-            users_url = "https://api.mercadolibre.com/users/me"
             headers = {'Authorization': f'Bearer {rec.access_token}'}
-            user_response = requests.get(users_url, headers=headers)
-            if user_response.status_code != 200:
-                continue
-            seller_id = user_response.json().get('id')
+            seller_id = rec.seller_id
             
-            orders_url = f"https://api.mercadolibre.com/orders/search?seller={seller_id}&order.status=paid"
-            response = requests.get(orders_url, headers=headers)
-            
-            if response.status_code == 200:
-                orders = response.json().get('results', [])
-                for order in orders:
-                    order_id = str(order.get('id'))
-                    existing = self.env['sale.order'].search([('meli_order_id', '=', order_id)])
-                    if existing:
+            if not seller_id:
+                # Fallback to fetch seller info if missing
+                users_url = "https://api.mercadolibre.com/users/me"
+                try:
+                    user_response = requests.get(users_url, headers=headers)
+                    if user_response.status_code == 200:
+                        seller_id = str(user_response.json().get('id'))
+                        rec.seller_id = seller_id
+                    else:
+                        _logger.error(f"Failed to fetch ML seller info: {user_response.text}")
                         continue
-                        
-                    buyer = order.get('buyer', {})
-                    nickname = buyer.get('nickname', 'MercadoLibre Guest')
-                    
-                    partner = self.env['res.partner'].search([('name', '=', nickname)], limit=1)
-                    if not partner:
-                        partner = self.env['res.partner'].create({
-                            'name': nickname,
-                        })
-                        
-                    # Create Sale Order
-                    order_vals = {
-                        'partner_id': partner.id,
-                        'meli_order_id': order_id,
-                        'meli_instance_id': rec.id,
-                        'state': 'draft',
-                        'order_line': [],
-                    }
-                    
-                    for item in order.get('order_items', []):
-                        meli_item_id = item.get('item', {}).get('id')
-                        qty = item.get('quantity', 1)
-                        price = item.get('unit_price', 0)
-                        
-                        m_item = self.env['meli.item'].search([('meli_id', '=', meli_item_id)], limit=1)
-                        product_id = m_item.product_id.id if m_item else False
-                        
-                        if product_id:
-                            order_vals['order_line'].append((0, 0, {
-                                'product_id': product_id,
-                                'product_uom_qty': qty,
-                                'price_unit': price,
-                            }))
+                except Exception as e:
+                    _logger.error(f"Exception fetching seller info for {rec.name}: {str(e)}")
+                    continue
+            
+            try:
+                orders_url = f"https://api.mercadolibre.com/orders/search?seller={seller_id}&order.status=paid"
+                response = requests.get(orders_url, headers=headers)
+                
+                if response.status_code == 200:
+                    orders = response.json().get('results', [])
+                    for order in orders:
+                        order_id = str(order.get('id'))
+                        existing = self.env['sale.order'].search([('meli_order_id', '=', order_id)])
+                        if existing:
+                            continue
                             
-                    if order_vals['order_line']:
-                        so = self.env['sale.order'].create(order_vals)
-                        so.action_confirm()
+                        buyer = order.get('buyer', {})
+                        nickname = buyer.get('nickname', 'MercadoLibre Guest')
+                        meli_user_id = str(buyer.get('id', ''))
+                        
+                        # Search by Meli User ID (requires inheritance of res.partner)
+                        partner = self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
+                        if not partner:
+                            partner = self.env['res.partner'].search([('name', '=', nickname)], limit=1)
+                            
+                        if not partner:
+                            partner = self.env['res.partner'].create({
+                                'name': nickname,
+                                'meli_user_id': meli_user_id,
+                                'meli_nickname': nickname,
+                            })
+                        elif not partner.meli_user_id:
+                            partner.write({
+                                'meli_user_id': meli_user_id,
+                                'meli_nickname': nickname,
+                            })
+                            
+                        # Create Sale Order
+                        order_vals = {
+                            'partner_id': partner.id,
+                            'meli_order_id': order_id,
+                            'meli_instance_id': rec.id,
+                            'state': 'draft',
+                            'order_line': [],
+                        }
+                        
+                        for item in order.get('order_items', []):
+                            meli_item_id = item.get('item', {}).get('id')
+                            qty = item.get('quantity', 1)
+                            price = item.get('unit_price', 0)
+                            
+                            m_item = self.env['meli.item'].search([('meli_id', '=', meli_item_id)], limit=1)
+                            product_id = m_item.product_id.id if m_item else False
+                            
+                            if product_id:
+                                order_vals['order_line'].append((0, 0, {
+                                    'product_id': product_id,
+                                    'product_uom_qty': qty,
+                                    'price_unit': price,
+                                }))
+                                
+                        if order_vals['order_line']:
+                            so = self.env['sale.order'].create(order_vals)
+                            so.action_confirm()
+                else:
+                    _logger.error(f"Error searching orders for {rec.name}: {response.text}")
+            except Exception as e:
+                _logger.error(f"Exception while syncing orders for {rec.name}: {str(e)}")
+                continue
 
     @api.model
     def cron_sync_orders(self):
         instances = self.search([('state', '=', 'authenticated')])
         instances.action_sync_orders()
+
+    def action_sync_items(self):
+        self.ensure_one()
+        self.env['meli.item'].action_import_items(self)
 
 

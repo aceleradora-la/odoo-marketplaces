@@ -1,6 +1,9 @@
 from odoo import models, fields, api, _
 import requests
 import base64
+import logging
+
+_logger = logging.getLogger(__name__)
 
 class AccountMove(models.Model):
     _inherit = 'account.move'
@@ -32,9 +35,15 @@ class AccountMove(models.Model):
                 'fiscal_document': (f'Factura_{move.name}.pdf', pdf_content, 'application/pdf')
             }
             
-            response = requests.post(url, headers=headers, files=files)
-            if response.status_code in [200, 201]:
-                move.meli_invoice_uploaded = True
+            try:
+                response = requests.post(url, headers=headers, files=files)
+                if response.status_code in [200, 201]:
+                    move.meli_invoice_uploaded = True
+                    _logger.info(f"Successfully uploaded invoice for move {move.name} to MercadoLibre")
+                else:
+                    _logger.error(f"Failed to upload invoice {move.name} to MercadoLibre. Status Code: {response.status_code}. Response: {response.text}")
+            except Exception as e:
+                _logger.error(f"Exception while uploading invoice {move.name} to MercadoLibre: {str(e)}")
 
     @api.model
     def cron_upload_meli_invoices(self):

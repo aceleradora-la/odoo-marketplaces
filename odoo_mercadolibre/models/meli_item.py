@@ -1,6 +1,9 @@
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 import requests
+import logging
+
+_logger = logging.getLogger(__name__)
 
 class MeliItem(models.Model):
     _name = 'meli.item'
@@ -78,17 +81,23 @@ class MeliItem(models.Model):
                 'Content-Type': 'application/json'
             }
             
-            response = requests.post(url, headers=headers, json=data)
-            if response.status_code == 201:
-                res = response.json()
-                rec.write({
-                    'meli_id': res.get('id'),
-                    'status': res.get('status'),
-                    'permalink': res.get('permalink'),
-                })
-            else:
+            try:
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 201:
+                    res = response.json()
+                    rec.write({
+                        'meli_id': res.get('id'),
+                        'status': res.get('status'),
+                        'permalink': res.get('permalink'),
+                    })
+                    _logger.info(f"Successfully published item {rec.name} to MercadoLibre")
+                else:
+                    rec.write({'status': 'error'})
+                    _logger.error(f"Error publishing {rec.name} to ML: {response.text}")
+                    raise UserError(_("Error posting to ML: %s") % response.text)
+            except Exception as e:
                 rec.write({'status': 'error'})
-                raise UserError(_("Error posting to ML: %s") % response.text)
+                _logger.error(f"Exception while publishing item {rec.name}: {str(e)}")
 
     def action_pause(self):
         for rec in self:
@@ -99,11 +108,16 @@ class MeliItem(models.Model):
                 'Authorization': f'Bearer {rec.instance_id.access_token}',
                 'Content-Type': 'application/json'
             }
-            response = requests.put(url, headers=headers, json={'status': 'paused'})
-            if response.status_code == 200:
-                rec.status = 'paused'
-            else:
-                raise UserError(_("Error pausing item: %s") % response.text)
+            try:
+                response = requests.put(url, headers=headers, json={'status': 'paused'})
+                if response.status_code == 200:
+                    rec.status = 'paused'
+                    _logger.info(f"Successfully paused item {rec.meli_id}")
+                else:
+                    _logger.error(f"Error pausing item {rec.meli_id}: {response.text}")
+                    raise UserError(_("Error pausing item: %s") % response.text)
+            except Exception as e:
+                _logger.error(f"Exception while pausing item {rec.meli_id}: {str(e)}")
 
     def action_activate(self):
         for rec in self:
@@ -114,11 +128,16 @@ class MeliItem(models.Model):
                 'Authorization': f'Bearer {rec.instance_id.access_token}',
                 'Content-Type': 'application/json'
             }
-            response = requests.put(url, headers=headers, json={'status': 'active'})
-            if response.status_code == 200:
-                rec.status = 'active'
-            else:
-                raise UserError(_("Error activating item: %s") % response.text)
+            try:
+                response = requests.put(url, headers=headers, json={'status': 'active'})
+                if response.status_code == 200:
+                    rec.status = 'active'
+                    _logger.info(f"Successfully activated item {rec.meli_id}")
+                else:
+                    _logger.error(f"Error activating item {rec.meli_id}: {response.text}")
+                    raise UserError(_("Error activating item: %s") % response.text)
+            except Exception as e:
+                _logger.error(f"Exception while activating item {rec.meli_id}: {str(e)}")
 
     def action_sync_price_stock(self):
         for rec in self:
@@ -154,8 +173,119 @@ class MeliItem(models.Model):
                     'price': rec.price,
                     'available_quantity': rec.available_quantity
                 }
-                requests.put(url, headers=headers, json=data)
+                try:
+                    response = requests.put(url, headers=headers, json=data)
+                    if response.status_code == 200:
+                        _logger.info(f"Successfully synced price and stock for item {rec.meli_id}")
+                    else:
+                        _logger.error(f"Failed to sync price/stock for {rec.meli_id}: {response.text}")
+                except Exception as e:
+                    _logger.error(f"Exception syncing price/stock for {rec.meli_id}: {str(e)}")
                 
+    @api.model
+    def action_import_items(self, instance):
+        """
+        Fetch all items for the seller and create/update meli.item records.
+        Using /users/{user_id}/items/search
+        """
+        if not instance.seller_id:
+            # Try to get seller_id
+            headers = {'Authorization': f'Bearer {instance.access_token}'}
+            user_response = requests.get("https://api.mercadolibre.com/users/me", headers=headers)
+            if user_response.status_code == 200:
+                instance.seller_id = str(user_response.json().get('id'))
+            else:
+                raise UserError(_("Could not fetch seller ID for item import."))
+
+        url = f"https://api.mercadolibre.com/users/{instance.seller_id}/items/search"
+        headers = {'Authorization': f'Bearer {instance.access_token}'}
+        
+        # Paginate through results
+        offset = 0
+        limit = 50
+        while True:
+            params = {'offset': offset, 'limit': limit}
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code != 200:
+                _logger.error(f"Error searching items: {response.text}")
+                break
+            
+            data = response.json()
+            item_ids = data.get('results', [])
+            if not item_ids:
+                break
+                
+            # Fetch details for each item ID (can use multiget but limit is 20)
+            for i in range(0, len(item_ids), 20):
+                batch = item_ids[i:i+20]
+                ids_str = ",".join(batch)
+                details_url = f"https://api.mercadolibre.com/items?ids={ids_str}"
+                det_resp = requests.get(details_url, headers=headers)
+                if det_resp.status_code == 200:
+                    for item_data_wrapper in det_resp.json():
+                        # ML returns a list of {code: 200, body: {...}}
+                        if item_data_wrapper.get('code') != 200:
+                            continue
+                        item_data = item_data_wrapper.get('body')
+                        self._create_or_update_from_ml(item_data, instance)
+                else:
+                    _logger.error(f"Error fetching item details: {det_resp.text}")
+            
+            offset += limit
+            if offset >= data.get('paging', {}).get('total', 0):
+                break
+
+    @api.model
+    def _create_or_update_from_ml(self, data, instance):
+        meli_id = data.get('id')
+        existing = self.search([('meli_id', '=', meli_id)], limit=1)
+        
+        status_map = {
+            'active': 'active',
+            'paused': 'paused',
+            'closed': 'closed',
+            'under_review': 'paused',
+            'inactive': 'paused',
+        }
+        
+        vals = {
+            'name': data.get('title'),
+            'price': data.get('price'),
+            'available_quantity': data.get('available_quantity'),
+            'status': status_map.get(data.get('status'), 'error'),
+            'permalink': data.get('permalink'),
+            'instance_id': instance.id,
+        }
+        
+        if not existing:
+            # Match product or create new one
+            # Try to match by SKU (seller_custom_field in ML)
+            sku = data.get('seller_custom_field')
+            product = False
+            if sku:
+                product = self.env['product.template'].search([('default_code', '=', sku)], limit=1)
+            
+            if not product:
+                # Try match by title
+                product = self.env['product.template'].search([('name', '=', data.get('title'))], limit=1)
+            
+            if not product:
+                # Create a minimal product template
+                product = self.env['product.template'].create({
+                    'name': data.get('title'),
+                    'list_price': data.get('price'),
+                    'default_code': sku or '',
+                    'type': 'consu', # or 'product' depending on stock
+                })
+            
+            vals.update({
+                'meli_id': meli_id,
+                'product_id': product.id,
+            })
+            self.create(vals)
+        else:
+            existing.write(vals)
+
     @api.model
     def cron_sync_price_stock(self):
         items = self.search([('status', '=', 'active')])

@@ -10,6 +10,7 @@
                     <button name="action_get_token" string="2. Fetch Token" type="object" class="oe_highlight" invisible="state == 'authenticated'"/>
                     <button name="action_refresh_token" string="Refresh Token" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_root_categories" string="Sync MLA Categories" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_sync_items" string="Sync Items" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_orders" string="Sync Orders" type="object" invisible="state != 'authenticated'"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,authenticated"/>
                 </header>
@@ -24,6 +25,7 @@
                             <field name="app_id"/>
                             <field name="secret_key" password="True"/>
                             <field name="redirect_uri"/>
+                            <field name="seller_id"/>
                         </group>
                         <group string="Configuration">
                             <field name="pricelist_id"/>
