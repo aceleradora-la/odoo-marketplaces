@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_meli_instance_form" model="ir.ui.view">
+        <field name="name">meli.instance.form</field>
+        <field name="model">meli.instance</field>
+        <field name="arch" type="xml">
+            <form string="MercadoLibre Instance">
+                <header>
+                    <button name="action_get_authorization_url" string="1. Get Auth URL" type="object" class="oe_highlight" invisible="state == 'authenticated'"/>
+                    <button name="action_get_token" string="2. Fetch Token" type="object" class="oe_highlight" invisible="state == 'authenticated'"/>
+                    <button name="action_refresh_token" string="Refresh Token" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_sync_root_categories" string="Sync MLA Categories" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_sync_orders" string="Sync Orders" type="object" invisible="state != 'authenticated'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,authenticated"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" placeholder="E.g. My Main ML Account"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Credentials">
+                            <field name="app_id"/>
+                            <field name="secret_key" password="True"/>
+                            <field name="redirect_uri"/>
+                        </group>
+                        <group string="Configuration">
+                            <field name="pricelist_id"/>
+                            <field name="stock_location_ids" widget="many2many_tags"/>
+                        </group>
+                        <group string="Authentication Status">
+                            <field name="authorization_code" invisible="state == 'authenticated'"/>
+                            <field name="access_token" password="True"/>
+                            <field name="refresh_token" password="True"/>
+                            <field name="token_expiration"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_meli_instance_tree" model="ir.ui.view">
+        <field name="name">meli.instance.tree</field>
+        <field name="model">meli.instance</field>
+        <field name="arch" type="xml">
+            <tree string="MercadoLibre Instances">
+                <field name="name"/>
+                <field name="app_id"/>
+                <field name="state" widget="badge" decoration-success="state == 'authenticated'" decoration-info="state == 'draft'" decoration-danger="state == 'error'"/>
+                <field name="token_expiration"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_meli_instance" model="ir.actions.act_window">
+        <field name="name">MercadoLibre Instances</field>
+        <field name="res_model">meli.instance</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_meli_instances_action"
+              name="Accounts"
+              parent="meli_menu_instances"
+              action="action_meli_instance"
+              sequence="10"/>
+</odoo>

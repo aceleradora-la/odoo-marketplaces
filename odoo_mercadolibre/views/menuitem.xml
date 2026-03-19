@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Top menu item -->
+    <menuitem id="meli_menu_root"
+              name="MercadoLibre"
+              web_icon="odoo_mercadolibre,static/description/icon.png"
+              sequence="50"/>
+
+    <menuitem id="meli_menu_configuration"
+              name="Configuration"
+              parent="meli_menu_root"
+              sequence="100"/>
+              
+    <menuitem id="meli_menu_instances"
+              name="Instances"
+              parent="meli_menu_configuration"
+              sequence="10"/>
+</odoo>

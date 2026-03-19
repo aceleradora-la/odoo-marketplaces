@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_meli_category_form" model="ir.ui.view">
+        <field name="name">meli.category.form</field>
+        <field name="model">meli.category</field>
+        <field name="arch" type="xml">
+            <form string="MercadoLibre Category">
+                <header>
+                    <button name="action_sync_children" string="Fetch Subcategories" type="object" class="oe_highlight" invisible="is_leaf"/>
+                    <button name="action_sync_attributes" string="Sync Attributes" type="object" class="oe_highlight" invisible="not is_leaf"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" placeholder="Category Name"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="meli_id"/>
+                            <field name="parent_id"/>
+                        </group>
+                        <group>
+                            <field name="is_leaf"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Attributes">
+                            <field name="attribute_ids">
+                                <tree editable="bottom">
+                                    <field name="name"/>
+                                    <field name="meli_id"/>
+                                    <field name="value_type"/>
+                                    <field name="is_required"/>
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_meli_category_tree" model="ir.ui.view">
+        <field name="name">meli.category.tree</field>
+        <field name="model">meli.category</field>
+        <field name="arch" type="xml">
+            <tree string="MercadoLibre Categories">
+                <field name="name"/>
+                <field name="meli_id"/>
+                <field name="is_leaf"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_meli_category" model="ir.actions.act_window">
+        <field name="name">MercadoLibre Categories</field>
+        <field name="res_model">meli.category</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_meli_categories_action"
+              name="Categories"
+              parent="meli_menu_configuration"
+              action="action_meli_category"
+              sequence="20"/>
+</odoo>

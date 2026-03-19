@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="ir_cron_refresh_meli_tokens" model="ir.cron">
+            <field name="name">MercadoLibre: Refresh Tokens</field>
+            <field name="model_id" ref="model_meli_instance"/>
+            <field name="state">code</field>
+            <field name="code">model.cron_refresh_tokens()</field>
+            <field name="interval_number">30</field>
+            <field name="interval_type">minutes</field>
+            <field name="numbercall">-1</field>
+            <field name="doall" eval="False"/>
+            <field name="active" eval="True"/>
+        </record>
+
+        <record id="ir_cron_sync_meli_price_stock" model="ir.cron">
+            <field name="name">MercadoLibre: Sync Price and Stock</field>
+            <field name="model_id" ref="model_meli_item"/>
+            <field name="state">code</field>
+            <field name="code">model.cron_sync_price_stock()</field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">hours</field>
+            <field name="numbercall">-1</field>
+            <field name="doall" eval="False"/>
+            <field name="active" eval="True"/>
+        </record>
+
+        <record id="ir_cron_sync_meli_orders" model="ir.cron">
+            <field name="name">MercadoLibre: Sync Orders</field>
+            <field name="model_id" ref="model_meli_instance"/>
+            <field name="state">code</field>
+            <field name="code">model.cron_sync_orders()</field>
+            <field name="interval_number">15</field>
+            <field name="interval_type">minutes</field>
+            <field name="numbercall">-1</field>
+            <field name="doall" eval="False"/>
+            <field name="active" eval="True"/>
+        </record>
+
+        <record id="ir_cron_sync_meli_invoices" model="ir.cron">
+            <field name="name">MercadoLibre: Upload Invoices</field>
+            <field name="model_id" ref="model_account_move"/>
+            <field name="state">code</field>
+            <field name="code">model.cron_upload_meli_invoices()</field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">hours</field>
+            <field name="numbercall">-1</field>
+            <field name="doall" eval="False"/>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
+</odoo>
