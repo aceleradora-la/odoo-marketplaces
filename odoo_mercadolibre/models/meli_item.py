@@ -41,9 +41,10 @@ class MeliItem(models.Model):
                     "value_name": attr_val.value
                 })
         
-        # We need a dummy picture if Odoo Product doesn't have a public URL
-        # For a full implementation, the image should be exposed via public controller
-        pictures = [{"source": "http://mla-s2-p.mlstatic.com/968521-MLA20805195516_072016-O.jpg"}]
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
+        # Use Odoo's public image URL for this product
+        image_url = f"{base_url}/web/image/product.template/{self.product_id.id}/image_1920"
+        pictures = [{"source": image_url}]
         
         return {
             "title": self.name,
@@ -57,7 +58,12 @@ class MeliItem(models.Model):
             "description": {"plain_text": self.product_id.description_sale or self.name},
             "video_id": None,
             "attributes": attributes,
-            "pictures": pictures
+            "pictures": pictures,
+            "shipping": {
+                "mode": "me2",
+                "local_pick_up": True,
+                "free_shipping": False,
+            }
         }
         
     def action_publish(self):
