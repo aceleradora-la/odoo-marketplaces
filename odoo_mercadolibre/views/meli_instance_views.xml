@@ -45,12 +45,12 @@
         <field name="name">meli.instance.tree</field>
         <field name="model">meli.instance</field>
         <field name="arch" type="xml">
-            <tree string="MercadoLibre Instances">
+            <list string="MercadoLibre Instances">
                 <field name="name"/>
                 <field name="app_id"/>
                 <field name="state" widget="badge" decoration-success="state == 'authenticated'" decoration-info="state == 'draft'" decoration-danger="state == 'error'"/>
                 <field name="token_expiration"/>
-            </tree>
+            </list>
         </field>
     </record>
 
