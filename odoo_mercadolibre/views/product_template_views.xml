@@ -13,8 +13,8 @@
                     <group string="MercadoLibre Attributes (Required)" invisible="not meli_category_id">
                         <field name="meli_attribute_value_ids" nolabel="1">
                             <list editable="bottom">
-                                <field name="meli_attribute_id" readonly="1"/>
-                                <field name="is_required" readonly="1" invisible="1"/>
+                                <field name="meli_attribute_id" domain="[('category_id', '=', parent.meli_category_id)]" options="{'no_create': True}"/>
+                                <field name="is_required" readonly="1" force_save="1"/>
                                 <field name="value"/>
                             </list>
                         </field>
