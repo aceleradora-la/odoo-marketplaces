@@ -26,10 +26,11 @@ class MeliCategory(models.Model):
         Sync attributes for this category from ML API
         GET /categories/{category_id}/attributes
         """
+        from odoo.exceptions import UserError
         self.ensure_one()
         instance = self.env['meli.instance'].search([('state', '=', 'authenticated')], limit=1)
         if not instance:
-            return
+            raise UserError("No hay una cuenta de MercadoLibre autenticada configurada para obtener los datos.")
             
         url = f"https://api.mercadolibre.com/categories/{self.meli_id}/attributes"
         headers = {'Authorization': f'Bearer {instance.access_token}'}
@@ -42,10 +43,11 @@ class MeliCategory(models.Model):
                     ('meli_id', '=', attr.get('id')),
                     ('category_id', '=', self.id)
                 ])
+                tags = attr.get('tags') or {}
                 vals = {
                     'name': attr.get('name'),
                     'value_type': attr.get('value_type'),
-                    'is_required': 'REQUIRED' in (attr.get('tags') or {}),
+                    'is_required': tags.get('required', False) if isinstance(tags, dict) else False,
                 }
                 if existing:
                     existing.write(vals)
@@ -55,6 +57,8 @@ class MeliCategory(models.Model):
                         'category_id': self.id,
                     })
                     self.env['meli.attribute'].create(vals)
+        else:
+            raise UserError(f"Error descargando atributos: {response.text}")
 
     def action_sync_children(self):
         self.ensure_one()
