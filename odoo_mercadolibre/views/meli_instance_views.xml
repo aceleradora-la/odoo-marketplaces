@@ -12,6 +12,7 @@
                     <button name="action_sync_root_categories" string="Sync MLA Categories" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_items" string="Sync Items" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_orders" string="Sync Orders" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_reset_connection" string="Reset Connection" type="object" invisible="state == 'draft'" confirm="This will clear current tokens. Are you sure?"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,authenticated"/>
                 </header>
                 <sheet>
