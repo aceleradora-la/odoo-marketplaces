@@ -13,14 +13,13 @@ class MeliCategory(models.Model):
     
     attribute_ids = fields.One2many('meli.attribute', 'category_id', 'Attributes')
 
-    def name_get(self):
-        result = []
+    @api.depends('name', 'parent_id.name')
+    def _compute_display_name(self):
         for rec in self:
             name = rec.name
             if rec.parent_id:
                 name = f"{rec.parent_id.name} / {name}"
-            result.append((rec.id, name))
-        return result
+            rec.display_name = name
 
     def action_sync_attributes(self):
         """

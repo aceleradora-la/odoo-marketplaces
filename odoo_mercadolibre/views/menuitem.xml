@@ -3,7 +3,6 @@
     <!-- Top menu item -->
     <menuitem id="meli_menu_root"
               name="MercadoLibre"
-              web_icon="odoo_mercadolibre,static/description/icon.png"
               sequence="50"/>
 
     <menuitem id="meli_menu_configuration"
