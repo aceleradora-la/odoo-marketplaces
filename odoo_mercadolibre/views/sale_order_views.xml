@@ -3,7 +3,7 @@
     <record id="view_order_form_inherit_meli" model="ir.ui.view">
         <field name="name">sale.order.form.inherit.meli</field>
         <field name="model">sale.order</field>
-        <field name="inherit_id" ref="sale.order_form_view"/>
+        <field name="inherit_id" ref="sale.view_order_form"/>
         <field name="arch" type="xml">
             <xpath expr="//header" position="inside">
                 <button name="action_sync_messages" string="Sync ML Messages" type="object" class="oe_highlight" invisible="meli_order_id == False"/>
