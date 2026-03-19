@@ -12,11 +12,11 @@
                     </group>
                     <group string="MercadoLibre Attributes (Required)" invisible="not meli_category_id">
                         <field name="meli_attribute_value_ids" nolabel="1">
-                            <tree editable="bottom">
+                            <list editable="bottom">
                                 <field name="meli_attribute_id" readonly="1"/>
                                 <field name="is_required" readonly="1" invisible="1"/>
                                 <field name="value"/>
-                            </tree>
+                            </list>
                         </field>
                     </group>
                 </page>
