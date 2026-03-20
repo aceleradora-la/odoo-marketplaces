@@ -27,7 +27,7 @@ class MeliProductAttributeValue(models.Model):
     _name = 'meli.product.attribute.value'
     _description = 'MercadoLibre Product Attribute Value'
 
-    product_id = fields.Many2one('product.template', string='Product', required=True, ondelete='cascade')
+    product_tmpl_id = fields.Many2one('product.template', string='Product Template', required=True, ondelete='cascade')
     meli_attribute_id = fields.Many2one('meli.attribute', string='Attribute', required=True)
     value = fields.Char('Value', required=True)
     is_required = fields.Boolean(related='meli_attribute_id.is_required', readonly=True)
