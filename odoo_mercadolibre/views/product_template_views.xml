@@ -22,7 +22,7 @@
                     </div>
                     <div>
                         <h3>MercadoLibre Images</h3>
-                        <field name="meli_image_ids" nolabel="1" context="{'default_product_tmpl_id': active_id}">
+                        <field name="meli_image_ids" nolabel="1" context="{'default_product_tmpl_id': id}">
                             <kanban>
                                 <field name="id"/>
                                 <field name="name"/>
