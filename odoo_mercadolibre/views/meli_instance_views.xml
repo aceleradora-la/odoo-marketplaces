@@ -48,19 +48,19 @@
         <field name="name">meli.instance.tree</field>
         <field name="model">meli.instance</field>
         <field name="arch" type="xml">
-            <list string="MercadoLibre Instances">
+            <tree string="MercadoLibre Instances">
                 <field name="name"/>
                 <field name="app_id"/>
                 <field name="state" widget="badge" decoration-success="state == 'authenticated'" decoration-info="state == 'draft'" decoration-danger="state == 'error'"/>
                 <field name="token_expiration"/>
-            </list>
+            </tree>
         </field>
     </record>
 
     <record id="action_meli_instance" model="ir.actions.act_window">
         <field name="name">MercadoLibre Instances</field>
         <field name="res_model">meli.instance</field>
-        <field name="view_mode">list,form</field>
+        <field name="view_mode">tree,form</field>
     </record>
 
     <menuitem id="menu_meli_instances_action"

@@ -27,12 +27,12 @@
                     <notebook>
                         <page string="Attributes">
                             <field name="attribute_ids">
-                                <list editable="bottom">
+                                <tree editable="bottom">
                                     <field name="name"/>
                                     <field name="meli_id"/>
                                     <field name="value_type"/>
                                     <field name="is_required"/>
-                                </list>
+                                </tree>
                             </field>
                         </page>
                     </notebook>
@@ -45,18 +45,18 @@
         <field name="name">meli.category.tree</field>
         <field name="model">meli.category</field>
         <field name="arch" type="xml">
-            <list string="MercadoLibre Categories">
+            <tree string="MercadoLibre Categories">
                 <field name="name"/>
                 <field name="meli_id"/>
                 <field name="is_leaf"/>
-            </list>
+            </tree>
         </field>
     </record>
 
     <record id="action_meli_category" model="ir.actions.act_window">
         <field name="name">MercadoLibre Categories</field>
         <field name="res_model">meli.category</field>
-        <field name="view_mode">list,form</field>
+        <field name="view_mode">tree,form</field>
     </record>
 
     <menuitem id="menu_meli_categories_action"
