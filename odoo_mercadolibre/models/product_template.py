@@ -4,7 +4,8 @@ class ProductTemplate(models.Model):
     _inherit = 'product.template'
 
     meli_category_id = fields.Many2one('meli.category', string='MercadoLibre Category', domain="[('is_leaf', '=', True)]")
-    meli_attribute_value_ids = fields.One2many('meli.product.attribute.value', 'product_id', string='Meli Attributes')
+    meli_attribute_value_ids = fields.One2many('meli.product.attribute.value', 'product_tmpl_id', 'MercadoLibre Attribute Values')
+    meli_image_ids = fields.One2many('meli.product.image', 'product_tmpl_id', 'MercadoLibre Images')
 
     @api.onchange('meli_category_id')
     def _onchange_meli_category_id(self):

@@ -8,10 +8,11 @@ _logger = logging.getLogger(__name__)
 class MeliItem(models.Model):
     _name = 'meli.item'
     _description = 'MercadoLibre Publication (Item)'
+    _inherit = ['mail.thread', 'mail.activity.mixin']
 
-    name = fields.Char('Title', required=True)
-    product_id = fields.Many2one('product.template', 'Product', required=True)
-    instance_id = fields.Many2one('meli.instance', 'ML Account', required=True)
+    name = fields.Char('Title', required=True, tracking=True)
+    product_id = fields.Many2one('product.template', 'Product', required=True, tracking=True)
+    instance_id = fields.Many2one('meli.instance', 'ML Account', required=True, tracking=True)
     meli_category_id = fields.Many2one(related='product_id.meli_category_id', store=True)
     
     meli_id = fields.Char('Meli ID (Item ID)', readonly=True)
@@ -24,13 +25,18 @@ class MeliItem(models.Model):
         ('paused', 'Paused'),
         ('closed', 'Closed'),
         ('error', 'Error')
-    ], string='Status', default='draft', readonly=True)
+    ], string='Status', default='draft', readonly=True, tracking=True)
     
     listing_type = fields.Selection([
         ('free', 'Gratuita'),
         ('gold_special', 'Clásica'),
         ('gold_pro', 'Premium')
-    ], string='Listing Type', required=True, default='gold_special')
+    ], string='Listing Type', required=True, default='gold_special', tracking=True)
+
+    def action_back_to_draft(self):
+        self.ensure_one()
+        self.write({'status': 'draft'})
+        self.message_post(body="Se ha reseteado el estado a borrador.")
     
     permalink = fields.Char('Permalink', readonly=True)
     
@@ -44,24 +50,36 @@ class MeliItem(models.Model):
                     "value_name": attr_val.value
                 })
         
+        # Get base URL for images
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
-        # Use Odoo's public image URL for this product
-        image_url = f"{base_url}/web/image/product.template/{self.product_id.id}/image_1920"
-        pictures = [{"source": image_url}]
         
+        # Prepare pictures (Main image + Extra ML images)
+        pictures = []
+        # Main Odoo Product Image
+        if self.product_id.image_1920:
+             pictures.append({
+                 'source': f"{base_url}/meli_image/product.template/{self.product_id.id}/image_1920"
+             })
+        
+        # Extra ML Images (new model)
+        for img in self.product_id.meli_image_ids:
+            pictures.append({
+                'source': f"{base_url}/meli_image/meli.product.image/{img.id}/image_1920"
+            })
+
         return {
-            "title": self.name,
-            "category_id": self.meli_category_id.meli_id,
-            "price": self.price,
-            "currency_id": "ARS",
-            "available_quantity": self.available_quantity,
-            "buying_mode": "buy_it_now",
-            "condition": "new",
-            "listing_type_id": self.listing_type,
-            "description": {"plain_text": self.product_id.description_sale or self.name},
-            "video_id": None,
-            "attributes": attributes,
-            "pictures": pictures,
+            'title': self.name,
+            'category_id': self.meli_category_id.meli_id,
+            'price': self.price,
+            'currency_id': 'ARS',  # Could be dynamic
+            'available_quantity': self.available_quantity,
+            'buying_mode': 'buy_it_now',
+            'listing_type_id': self.listing_type,
+            'condition': 'new',
+            'description': {"plain_text": self.product_id.description_sale or self.name},
+            'video_id': None,
+            'pictures': pictures,
+            'attributes': attributes,
             "shipping": {
                 "mode": "me2",
                 "local_pick_up": True,
@@ -74,6 +92,7 @@ class MeliItem(models.Model):
             if rec.status != 'draft':
                 continue
             
+            rec.message_post(body="Iniciando publicación en MercadoLibre...")
             data = rec._prepare_item_json()
             url = "https://api.mercadolibre.com/items"
             headers = {
@@ -90,14 +109,19 @@ class MeliItem(models.Model):
                         'status': res.get('status'),
                         'permalink': res.get('permalink'),
                     })
+                    rec.message_post(body=f"Publicado exitosamente. ML ID: {res.get('id')}")
                     _logger.info(f"Successfully published item {rec.name} to MercadoLibre")
                 else:
+                    error_data = response.text
                     rec.write({'status': 'error'})
-                    _logger.error(f"Error publishing {rec.name} to ML: {response.text}")
-                    raise UserError(_("Error posting to ML: %s") % response.text)
+                    rec.message_post(body=f"Error al publicar en ML: {error_data}")
+                    _logger.error(f"Error publishing {rec.name} to ML: {error_data}")
+                    # No raise here to allow user to see error in chatter
             except Exception as e:
+                error_msg = str(e)
                 rec.write({'status': 'error'})
-                _logger.error(f"Exception while publishing item {rec.name}: {str(e)}")
+                rec.message_post(body=f"Excepción durante la publicación: {error_msg}")
+                _logger.error(f"Exception while publishing item {rec.name}: {error_msg}")
 
     def action_pause(self):
         for rec in self:
