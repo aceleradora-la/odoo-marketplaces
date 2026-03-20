@@ -102,7 +102,18 @@ msgstr "Sincronizar Ítems"
 #. module: odoo_mercadolibre
 msgid "Sync Orders"
 msgstr "Sincronizar Pedidos"
-
 #. module: odoo_mercadolibre
 msgid "Reset Connection"
 msgstr "Restablecer Conexión"
+
+#. module: odoo_mercadolibre
+msgid "Reset to Draft"
+msgstr "Restablecer a Borrador"
+
+#. module: odoo_mercadolibre
+msgid "MercadoLibre Images"
+msgstr "Imágenes de MercadoLibre"
+
+#. module: odoo_mercadolibre
+msgid "MercadoLibre Attributes (Required)"
+msgstr "Atributos de MercadoLibre (Requeridos)"
