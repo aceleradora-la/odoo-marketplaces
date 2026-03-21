@@ -13,11 +13,11 @@
                     <div invisible="not meli_category_id">
                         <h3>MercadoLibre Attributes (Required)</h3>
                         <field name="meli_attribute_value_ids" nolabel="1">
-                            <tree editable="bottom">
+                            <list editable="bottom">
                                 <field name="meli_attribute_id" domain="[('category_id', '=', parent.meli_category_id)]" options="{'no_create': True}"/>
                                 <field name="is_required" readonly="1" force_save="1"/>
                                 <field name="value"/>
-                            </tree>
+                            </list>
                         </field>
                     </div>
                     <div>
