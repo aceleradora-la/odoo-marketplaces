@@ -102,6 +102,7 @@ class MeliItem(models.Model):
             rec.message_post(body="Iniciando publicación en MercadoLibre...")
             data = rec._prepare_item_json()
             try:
+                url = "https://api.mercadolibre.com/items"
                 response = rec.instance_id._call_api('POST', url, json=data)
                 if response.status_code == 201:
                     res = response.json()
