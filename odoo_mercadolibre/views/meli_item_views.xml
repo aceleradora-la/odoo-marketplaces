@@ -7,6 +7,7 @@
             <form string="MercadoLibre Publication">
                 <header>
                     <button name="action_publish" string="Publish to ML" type="object" class="oe_highlight" invisible="status != 'draft'"/>
+                    <button name="action_check_status" string="Check ML Status" type="object" invisible="status == 'draft'"/>
                     <button name="action_pause" string="Pause" type="object" invisible="status != 'active'"/>
                     <button name="action_activate" string="Re-activate" type="object" invisible="status != 'paused'"/>
                     <button name="action_back_to_draft" string="Reset to Draft" type="object" invisible="status != 'error'"/>
