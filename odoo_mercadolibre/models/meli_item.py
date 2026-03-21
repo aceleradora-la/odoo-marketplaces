@@ -101,14 +101,8 @@ class MeliItem(models.Model):
 
             rec.message_post(body="Iniciando publicación en MercadoLibre...")
             data = rec._prepare_item_json()
-            url = "https://api.mercadolibre.com/items"
-            headers = {
-                'Authorization': f'Bearer {rec.instance_id.access_token}',
-                'Content-Type': 'application/json'
-            }
-            
             try:
-                response = requests.post(url, headers=headers, json=data)
+                response = rec.instance_id._call_api('POST', url, json=data)
                 if response.status_code == 201:
                     res = response.json()
                     rec.write({
@@ -136,13 +130,8 @@ class MeliItem(models.Model):
                 continue
             
             rec.instance_id.check_token_validity()
-            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
-            headers = {
-                'Authorization': f'Bearer {rec.instance_id.access_token}',
-                'Content-Type': 'application/json'
-            }
             try:
-                response = requests.put(url, headers=headers, json={'status': 'paused'})
+                response = rec.instance_id._call_api('PUT', url, json={'status': 'paused'})
                 if response.status_code == 200:
                     rec.status = 'paused'
                     _logger.info(f"Successfully paused item {rec.meli_id}")
@@ -158,13 +147,8 @@ class MeliItem(models.Model):
                 continue
             
             rec.instance_id.check_token_validity()
-            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
-            headers = {
-                'Authorization': f'Bearer {rec.instance_id.access_token}',
-                'Content-Type': 'application/json'
-            }
             try:
-                response = requests.put(url, headers=headers, json={'status': 'active'})
+                response = rec.instance_id._call_api('PUT', url, json={'status': 'active'})
                 if response.status_code == 200:
                     rec.status = 'active'
                     _logger.info(f"Successfully activated item {rec.meli_id}")
@@ -202,16 +186,12 @@ class MeliItem(models.Model):
                 
                 # Update in ML
                 url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
-                headers = {
-                    'Authorization': f'Bearer {rec.instance_id.access_token}',
-                    'Content-Type': 'application/json'
-                }
                 data = {
                     'price': rec.price,
                     'available_quantity': rec.available_quantity
                 }
                 try:
-                    response = requests.put(url, headers=headers, json=data)
+                    response = rec.instance_id._call_api('PUT', url, json=data)
                     if response.status_code == 200:
                         _logger.info(f"Successfully synced price and stock for item {rec.meli_id}")
                     else:
@@ -228,22 +208,20 @@ class MeliItem(models.Model):
         instance.check_token_validity()
         if not instance.seller_id:
             # Try to get seller_id
-            headers = {'Authorization': f'Bearer {instance.access_token}'}
-            user_response = requests.get("https://api.mercadolibre.com/users/me", headers=headers)
+            user_response = instance._call_api('GET', "https://api.mercadolibre.com/users/me")
             if user_response.status_code == 200:
                 instance.seller_id = str(user_response.json().get('id'))
             else:
                 raise UserError(_("Could not fetch seller ID for item import."))
 
         url = f"https://api.mercadolibre.com/users/{instance.seller_id}/items/search"
-        headers = {'Authorization': f'Bearer {instance.access_token}'}
         
         # Paginate through results
         offset = 0
         limit = 50
         while True:
             params = {'offset': offset, 'limit': limit}
-            response = requests.get(url, headers=headers, params=params)
+            response = instance._call_api('GET', url, params=params)
             if response.status_code != 200:
                 _logger.error(f"Error searching items: {response.text}")
                 break
@@ -258,7 +236,7 @@ class MeliItem(models.Model):
                 batch = item_ids[i:i+20]
                 ids_str = ",".join(batch)
                 details_url = f"https://api.mercadolibre.com/items?ids={ids_str}"
-                det_resp = requests.get(details_url, headers=headers)
+                det_resp = instance._call_api('GET', details_url)
                 if det_resp.status_code == 200:
                     for item_data_wrapper in det_resp.json():
                         # ML returns a list of {code: 200, body: {...}}
