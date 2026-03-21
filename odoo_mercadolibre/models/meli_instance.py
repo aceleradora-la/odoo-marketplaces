@@ -101,7 +101,7 @@ class MeliInstance(models.Model):
             res_data = response.json()
             expires_in = res_data.get('expires_in', 21600)  # usually 6 hours
             user_id = str(res_data.get('user_id', ''))
-            self.write({
+            self.sudo().write({
                 'access_token': res_data.get('access_token'),
                 'refresh_token': res_data.get('refresh_token'),
                 'token_expiration': fields.Datetime.now() + datetime.timedelta(seconds=expires_in),
