@@ -92,6 +92,13 @@ class MeliItem(models.Model):
             if rec.status != 'draft':
                 continue
             
+            # Ensure token is valid before starting
+            try:
+                rec.instance_id.check_token_validity()
+            except Exception as e:
+                rec.message_post(body=f"Error validando token: {str(e)}")
+                raise UserError(_("Could not validate token: %s") % str(e))
+
             rec.message_post(body="Iniciando publicación en MercadoLibre...")
             data = rec._prepare_item_json()
             url = "https://api.mercadolibre.com/items"
