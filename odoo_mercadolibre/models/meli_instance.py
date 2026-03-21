@@ -159,6 +159,7 @@ class MeliInstance(models.Model):
 
     def action_sync_orders(self):
         for rec in self:
+            rec.check_token_validity()
             if rec.state != 'authenticated':
                 continue
             
