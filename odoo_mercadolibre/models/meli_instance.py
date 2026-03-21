@@ -123,13 +123,39 @@ class MeliInstance(models.Model):
             'seller_id': False,
         })
 
+    def _call_api(self, method, url, **kwargs):
+        """
+        Generic method to call ML API with token management and auto-retry on 401.
+        """
+        self.ensure_one()
+        self.check_token_validity()
+        
+        headers = kwargs.get('headers', {}) or {}
+        # Ensure latest access token is used
+        headers['Authorization'] = f'Bearer {self.access_token}'
+        kwargs['headers'] = headers
+        
+        response = requests.request(method, url, **kwargs)
+        
+        if response.status_code == 401:
+            # Token might have expired or been revoked externally, try refresh once
+            _logger.info(f"401 Unauthorized for {url}, attempting token refresh for {self.name}...")
+            self.action_refresh_token()
+            headers['Authorization'] = f'Bearer {self.access_token}'
+            kwargs['headers'] = headers
+            response = requests.request(method, url, **kwargs)
+            
+        return response
+
     def check_token_validity(self):
         """Called before API requests to ensure token is valid"""
         self.ensure_one()
         if not self.access_token:
-            raise UserError(_("Not authenticated with MercadoLibre."))
+            raise UserError(_("Not authenticated with MercadoLibre Account '%s'.") % self.name)
         
-        if self.token_expiration and self.token_expiration <= fields.Datetime.now():
+        # Buffer of 5 minutes before actual expiration
+        limit_time = fields.Datetime.now() + datetime.timedelta(minutes=5)
+        if self.token_expiration and self.token_expiration <= limit_time:
             self.action_refresh_token()
             
     def cron_refresh_tokens(self):
@@ -146,8 +172,7 @@ class MeliInstance(models.Model):
     def action_sync_root_categories(self):
         self.ensure_one()
         url = "https://api.mercadolibre.com/sites/MLA/categories"
-        headers = {'Authorization': f'Bearer {self.access_token}'}
-        response = requests.get(url, headers=headers)
+        response = self._call_api('GET', url)
         if response.status_code == 200:
             for cat in response.json():
                 existing = self.env['meli.category'].search([('meli_id', '=', cat['id'])])
@@ -170,7 +195,7 @@ class MeliInstance(models.Model):
                 # Fallback to fetch seller info if missing
                 users_url = "https://api.mercadolibre.com/users/me"
                 try:
-                    user_response = requests.get(users_url, headers=headers)
+                    user_response = rec._call_api('GET', users_url)
                     if user_response.status_code == 200:
                         seller_id = str(user_response.json().get('id'))
                         rec.seller_id = seller_id
@@ -183,7 +208,7 @@ class MeliInstance(models.Model):
             
             try:
                 orders_url = f"https://api.mercadolibre.com/orders/search?seller={seller_id}&order.status=paid"
-                response = requests.get(orders_url, headers=headers)
+                response = rec._call_api('GET', orders_url)
                 
                 if response.status_code == 200:
                     orders = response.json().get('results', [])
