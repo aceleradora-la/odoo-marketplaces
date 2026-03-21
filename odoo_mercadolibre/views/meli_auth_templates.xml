@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="meli_auth_success" name="MercadoLibre Auth Success">
+        <t t-call="website.layout">
+            <div id="wrap">
+                <div class="container py-5">
+                    <div class="row justify-content-center">
+                        <div class="col-lg-8 text-center">
+                            <i class="fa fa-check-circle text-success fa-5x mb-4"></i>
+                            <h1 class="mb-4">¡Autenticación Exitosa!</h1>
+                            <p class="lead mb-4">
+                                Ahora puedes cerrar esta ventana y copiar el código que aparece abajo 
+                                en el campo **Authorization Code** de tu instancia en Odoo.
+                            </p>
+                            <div class="p-4 bg-light shadow-sm rounded mb-4" style="border: 2px dashed #ffdb00; background-color: #fff9e6 !important;">
+                                <h4 class="text-muted small text-uppercase mb-2">Tu código:</h4>
+                                <code class="display-6 word-break-all text-primary" id="meli_code_copy"><t t-esc="code"/></code>
+                            </div>
+                            <button class="btn btn-warning btn-lg" onclick="navigator.clipboard.writeText(document.getElementById('meli_code_copy').innerText); alert('Código copiado al portapapeles');">
+                                <i class="fa fa-copy mr-2"></i> Copiar Código
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </t>
+    </template>
+</odoo>
