@@ -134,6 +134,8 @@ class MeliItem(models.Model):
         for rec in self:
             if rec.status != 'active' or not rec.meli_id:
                 continue
+            
+            rec.instance_id.check_token_validity()
             url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
             headers = {
                 'Authorization': f'Bearer {rec.instance_id.access_token}',
@@ -154,6 +156,8 @@ class MeliItem(models.Model):
         for rec in self:
             if rec.status != 'paused' or not rec.meli_id:
                 continue
+            
+            rec.instance_id.check_token_validity()
             url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
             headers = {
                 'Authorization': f'Bearer {rec.instance_id.access_token}',
@@ -174,6 +178,8 @@ class MeliItem(models.Model):
         for rec in self:
             if rec.status != 'active' or not rec.meli_id:
                 continue
+            
+            rec.instance_id.check_token_validity()
             
             # Get Price from Instance Pricelist
             price = rec.price
@@ -219,6 +225,7 @@ class MeliItem(models.Model):
         Fetch all items for the seller and create/update meli.item records.
         Using /users/{user_id}/items/search
         """
+        instance.check_token_validity()
         if not instance.seller_id:
             # Try to get seller_id
             headers = {'Authorization': f'Bearer {instance.access_token}'}
