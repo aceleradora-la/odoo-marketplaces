@@ -1,6 +1,6 @@
 {
     'name': 'MercadoLibre Integration',
-    'version': '19.0.1.3.2',
+    'version': '19.0.1.4.0',
     'category': 'Sales',
     'summary': 'Integración completa entre Odoo y MercadoLibre (V18/19)',
     'description': """
@@ -10,7 +10,7 @@
     'author': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
-    'depends': ['base', 'sale_management', 'stock', 'account', 'mail'],
+    'depends': ['base', 'sale_management', 'stock', 'account', 'mail', 'website'],
     'data': [
         'security/ir.model.access.csv',
         'data/ir_cron.xml',
@@ -21,6 +21,7 @@
         'views/meli_item_views.xml',
         'views/sale_order_views.xml',
         'views/res_partner_views.xml',
+        'views/meli_auth_templates.xml',
     ],
     'installable': True,
     'application': True,

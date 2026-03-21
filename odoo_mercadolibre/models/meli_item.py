@@ -159,6 +159,35 @@ class MeliItem(models.Model):
             except Exception as e:
                 _logger.error(f"Exception while activating item {rec.meli_id}: {str(e)}")
 
+    def action_check_status(self):
+        """Fetch current item status from ML and update Odoo record."""
+        for rec in self:
+            if not rec.meli_id:
+                continue
+            
+            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
+            response = rec.instance_id._call_api('GET', url)
+            
+            if response.status_code == 200:
+                data = response.json()
+                status_map = {
+                    'active': 'active',
+                    'paused': 'paused',
+                    'closed': 'closed',
+                    'under_review': 'paused',
+                    'inactive': 'paused',
+                }
+                new_status = status_map.get(data.get('status'), 'error')
+                rec.write({
+                    'status': new_status,
+                    'price': data.get('price'),
+                    'available_quantity': data.get('available_quantity'),
+                    'permalink': data.get('permalink'),
+                })
+                rec.message_post(body=f"Estado verificado en ML: {data.get('status')} (Odoo: {new_status})")
+            else:
+                rec.message_post(body=f"Error verificando estado en ML: {response.text}")
+
     def action_sync_price_stock(self):
         for rec in self:
             if rec.status != 'active' or not rec.meli_id:
