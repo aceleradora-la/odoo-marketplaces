@@ -1,6 +1,7 @@
-from odoo import http
-from odoo.http import request
-import werkzeug
+import base64
+import logging
+
+_logger = logging.getLogger(__name__)
 
 class MeliController(http.Controller):
 
@@ -42,11 +43,17 @@ class MeliController(http.Controller):
         
         record = request.env[model].sudo().browse(id)
         if not record.exists():
+             _logger.warning(f"ML Image Request: Record {model}({id}) not found")
              return werkzeug.exceptions.NotFound()
              
-        # Modern way to serve images in Odoo 17/18
+        image_base64 = record[field]
+        if not image_base64:
+             _logger.warning(f"ML Image Request: Field {field} in {model}({id}) is empty")
+             return werkzeug.exceptions.NotFound()
+        
         try:
-            stream = request.env['ir.binary'].sudo()._get_image_stream(record, field)
-            return stream.get_response()
-        except Exception:
+            image_data = base64.b64decode(image_base64)
+            return request.make_response(image_data, [('Content-Type', 'image/png')])
+        except Exception as e:
+            _logger.error(f"Error serving ML image for {model}({id}): {str(e)}")
             return werkzeug.exceptions.NotFound()
