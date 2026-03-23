@@ -9,21 +9,26 @@ class MeliController(http.Controller):
         code = kwargs.get('code')
         if code:
             html = f"""
+                <!DOCTYPE html>
                 <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <title>Autenticación MercadoLibre</title>
+                    </head>
                     <body style="font-family: sans-serif; text-align: center; padding: 50px;">
                         <h1 style="color: #2e7d32;">¡Autenticación Exitosa!</h1>
                         <p>Por favor, copia el siguiente código y pégalo en Odoo:</p>
                         <div style="background: #f5f5f5; padding: 20px; border: 2px dashed #ccc; font-size: 24px; margin: 20px 0; word-break: break-all;">
-                            <code>{code}</code>
+                            <code id="meli_code_copy">{code}</code>
                         </div>
-                        <button onclick="navigator.clipboard.writeText('{code}'); alert('Código copiado');" 
+                        <button onclick="navigator.clipboard.writeText(document.getElementById('meli_code_copy').innerText); alert('Código copiado');" 
                                 style="padding: 10px 20px; background: #ffdb00; border: none; cursor: pointer; border-radius: 5px; font-weight: bold;">
                             Copiar Código
                         </button>
                     </body>
                 </html>
             """
-            return request.make_response(html, [('Content-Type', 'text/html')])
+            return request.make_response(html, [('Content-Type', 'text/html; charset=utf-8')])
         return "No code received"
 
     @http.route([
@@ -39,10 +44,9 @@ class MeliController(http.Controller):
         if not record.exists():
              return werkzeug.exceptions.NotFound()
              
-        status, headers, content = request.env['ir.http'].sudo().binary_content(
-            model=model, id=id, field=field, default_mimetype='image/png')
-            
-        if status != 200:
+        # Modern way to serve images in Odoo 17/18
+        try:
+            stream = request.env['ir.binary'].sudo()._get_image_stream(record, field)
+            return stream.get_response()
+        except Exception:
             return werkzeug.exceptions.NotFound()
-            
-        return request.make_response(content, headers)

@@ -1,6 +1,6 @@
 {
     'name': 'MercadoLibre Integration',
-    'version': '18.0.1.4.6',
+    'version': '18.0.1.4.7',
     'category': 'Sales',
     'summary': 'Integración completa entre Odoo y MercadoLibre (V18/19)',
     'description': """
