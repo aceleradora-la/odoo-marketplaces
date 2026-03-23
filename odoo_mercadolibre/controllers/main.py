@@ -1,3 +1,6 @@
+from odoo import http
+from odoo.http import request
+import werkzeug
 import base64
 import logging
 
