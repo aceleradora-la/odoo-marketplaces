@@ -141,7 +141,12 @@ class MeliInstance(models.Model):
             # Token might have expired or been revoked externally, try refresh once
             _logger.info(f"401 Unauthorized for {url}, attempting token refresh for {self.name}...")
             self.action_refresh_token()
-            headers['Authorization'] = f'Bearer {self.access_token}'
+            
+            # Explicitly invalidate cache for this record to ensure we get the NEW token from DB
+            self.invalidate_recordset(['access_token', 'refresh_token'])
+            new_token = self.access_token
+            
+            headers['Authorization'] = f'Bearer {new_token}'
             kwargs['headers'] = headers
             response = requests.request(method, url, **kwargs)
             
