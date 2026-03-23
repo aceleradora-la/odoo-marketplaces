@@ -65,7 +65,9 @@ class MeliInstance(models.Model):
         }
         
         try:
+            _logger.info(f"Requesting ML token for {self.name} with App ID {self.app_id[:5]}...")
             response = requests.post(url, headers=headers, data=data)
+            _logger.info(f"ML OAuth Response ({response.status_code}): {response.text}")
             self._process_token_response(response)
         except Exception as e:
             self.write({'state': 'error'})
@@ -84,13 +86,15 @@ class MeliInstance(models.Model):
             }
             data = {
                 'grant_type': 'refresh_token',
-                'client_id': rec.app_id,
-                'client_secret': rec.secret_key,
-                'refresh_token': rec.refresh_token
+                'client_id': rec.app_id.strip(),
+                'client_secret': rec.secret_key.strip(),
+                'refresh_token': rec.refresh_token.strip()
             }
             
             try:
+                _logger.info(f"Refreshing ML token for {rec.name}...")
                 response = requests.post(url, headers=headers, data=data)
+                _logger.info(f"ML Refresh Response ({response.status_code}): {response.text}")
                 rec._process_token_response(response)
             except Exception as e:
                 rec.write({'state': 'error'})
@@ -101,9 +105,12 @@ class MeliInstance(models.Model):
             res_data = response.json()
             expires_in = res_data.get('expires_in', 21600)  # usually 6 hours
             user_id = str(res_data.get('user_id', ''))
+            access_token = res_data.get('access_token', '').strip()
+            refresh_token = res_data.get('refresh_token', '').strip()
+            
             self.sudo().write({
-                'access_token': res_data.get('access_token'),
-                'refresh_token': res_data.get('refresh_token'),
+                'access_token': access_token,
+                'refresh_token': refresh_token,
                 'token_expiration': fields.Datetime.now() + datetime.timedelta(seconds=expires_in),
                 'state': 'authenticated',
                 'seller_id': user_id,
