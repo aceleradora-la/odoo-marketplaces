@@ -4,13 +4,26 @@ import werkzeug
 
 class MeliController(http.Controller):
 
-    @http.route('/meli/auth', type='http', auth="public", website=True)
+    @http.route('/meli/auth', type='http', auth="public")
     def meli_auth(self, **kwargs):
         code = kwargs.get('code')
         if code:
-            return request.render('odoo_mercadolibre.meli_auth_success', {
-                'code': code,
-            })
+            html = f"""
+                <html>
+                    <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+                        <h1 style="color: #2e7d32;">¡Autenticación Exitosa!</h1>
+                        <p>Por favor, copia el siguiente código y pégalo en Odoo:</p>
+                        <div style="background: #f5f5f5; padding: 20px; border: 2px dashed #ccc; font-size: 24px; margin: 20px 0; word-break: break-all;">
+                            <code>{code}</code>
+                        </div>
+                        <button onclick="navigator.clipboard.writeText('{code}'); alert('Código copiado');" 
+                                style="padding: 10px 20px; background: #ffdb00; border: none; cursor: pointer; border-radius: 5px; font-weight: bold;">
+                            Copiar Código
+                        </button>
+                    </body>
+                </html>
+            """
+            return request.make_response(html, [('Content-Type', 'text/html')])
         return "No code received"
 
     @http.route([
