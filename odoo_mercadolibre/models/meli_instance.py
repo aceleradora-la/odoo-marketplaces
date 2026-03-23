@@ -135,20 +135,25 @@ class MeliInstance(models.Model):
         headers['Authorization'] = f'Bearer {self.access_token}'
         kwargs['headers'] = headers
         
+        _logger.info(f"ML API Call: {method} {url} with token ending in ...{self.access_token[-10:] if self.access_token else 'None'}")
         response = requests.request(method, url, **kwargs)
         
         if response.status_code == 401:
-            # Token might have expired or been revoked externally, try refresh once
-            _logger.info(f"401 Unauthorized for {url}, attempting token refresh for {self.name}...")
-            self.action_refresh_token()
+            _logger.warning(f"401 Unauthorized for {url}, attempting token refresh for {self.name}...")
+            # Use sudo to avoid any permission issue during write
+            self.sudo().action_refresh_token()
             
-            # Explicitly invalidate cache for this record to ensure we get the NEW token from DB
+            # Explicitly force-refresh cache from DB
             self.invalidate_recordset(['access_token', 'refresh_token'])
-            new_token = self.access_token
+            new_token = self.sudo().access_token
             
+            _logger.info(f"Retrying ML API Call with new token ending in ...{new_token[-10:] if new_token else 'None'}")
             headers['Authorization'] = f'Bearer {new_token}'
             kwargs['headers'] = headers
             response = requests.request(method, url, **kwargs)
+            
+            if response.status_code == 401:
+                _logger.error(f"STILL 401 after retry! New token also rejected: {response.text}")
             
         return response
 
