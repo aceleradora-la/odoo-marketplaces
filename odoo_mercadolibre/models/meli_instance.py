@@ -58,14 +58,14 @@ class MeliInstance(models.Model):
         }
         data = {
             'grant_type': 'authorization_code',
-            'client_id': self.app_id,
-            'client_secret': self.secret_key,
-            'code': self.authorization_code,
-            'redirect_uri': self.redirect_uri
+            'client_id': self.app_id.strip(),
+            'client_secret': self.secret_key.strip(),
+            'code': self.authorization_code.strip(),
+            'redirect_uri': self.redirect_uri.strip()
         }
         
         try:
-            _logger.info(f"Requesting ML token for {self.name} with App ID {self.app_id[:5]}...")
+            _logger.info(f"Requesting ML token for {self.name} with App ID {self.app_id.strip()[:5]}...")
             response = requests.post(url, headers=headers, data=data)
             _logger.info(f"ML OAuth Response ({response.status_code}): {response.text}")
             self._process_token_response(response)
@@ -77,6 +77,7 @@ class MeliInstance(models.Model):
     def action_refresh_token(self):
         for rec in self:
             if not rec.refresh_token:
+                _logger.error(f"Cannot refresh token for {rec.name}: No refresh_token found!")
                 continue
             
             url = "https://api.mercadolibre.com/oauth/token"
@@ -114,10 +115,13 @@ class MeliInstance(models.Model):
                 'token_expiration': fields.Datetime.now() + datetime.timedelta(seconds=expires_in),
                 'state': 'authenticated',
                 'seller_id': user_id,
+                'authorization_code': False, # Clear once used
             })
         else:
+            error_msg = response.text
             self.write({'state': 'error'})
-            raise UserError(_("Error getting token: %s") % response.text)
+            _logger.error(f"ML OAuth Error: {error_msg}")
+            raise UserError(_("MercadoLibre rejected the request: %s") % error_msg)
 
     def action_reset_connection(self):
         self.ensure_one()
