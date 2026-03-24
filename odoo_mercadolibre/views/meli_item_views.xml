@@ -10,7 +10,8 @@
                     <button name="action_check_status" string="Check ML Status" type="object" invisible="status == 'draft'"/>
                     <button name="action_pause" string="Pause" type="object" invisible="status != 'active'"/>
                     <button name="action_activate" string="Re-activate" type="object" invisible="status != 'paused'"/>
-                    <button name="action_back_to_draft" string="Reset to Draft" type="object" invisible="status != 'error'"/>
+                    <button name="action_close" string="Close Publication" type="object" invisible="status in ['draft', 'closed']" confirm="Esto cerrará la publicación en ML. ¿Continuar?"/>
+                    <button name="action_back_to_draft" string="Reset to Draft" type="object" invisible="status not in ['error', 'closed', 'paused']"/>
                     <field name="status" widget="statusbar" statusbar_visible="draft,active,paused,closed"/>
                 </header>
                 <sheet>

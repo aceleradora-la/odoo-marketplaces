@@ -58,13 +58,13 @@ class MeliItem(models.Model):
         # Main Odoo Product Image
         if self.product_id.image_1920:
              pictures.append({
-                 'source': f"{base_url}/meli_image/product.template/{self.product_id.id}/image_1920"
+                 'source': f"{base_url}/meli_image/product.template/{self.product_id.id}/image_1920/product_main.jpg"
              })
         
         # Extra ML Images (new model)
         for img in self.product_id.meli_image_ids:
             pictures.append({
-                'source': f"{base_url}/meli_image/meli.product.image/{img.id}/image_1920"
+                'source': f"{base_url}/meli_image/meli.product.image/{img.id}/image_1920/extra_{img.id}.jpg"
             })
 
         return {
@@ -131,10 +131,12 @@ class MeliItem(models.Model):
                 continue
             
             rec.instance_id.check_token_validity()
+            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
             try:
                 response = rec.instance_id._call_api('PUT', url, json={'status': 'paused'})
                 if response.status_code == 200:
                     rec.status = 'paused'
+                    rec.message_post(body="Publicación pausada en MercadoLibre.")
                     _logger.info(f"Successfully paused item {rec.meli_id}")
                 else:
                     _logger.error(f"Error pausing item {rec.meli_id}: {response.text}")
@@ -148,16 +150,44 @@ class MeliItem(models.Model):
                 continue
             
             rec.instance_id.check_token_validity()
+            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
             try:
                 response = rec.instance_id._call_api('PUT', url, json={'status': 'active'})
                 if response.status_code == 200:
                     rec.status = 'active'
+                    rec.message_post(body="Publicación activada en MercadoLibre.")
                     _logger.info(f"Successfully activated item {rec.meli_id}")
                 else:
                     _logger.error(f"Error activating item {rec.meli_id}: {response.text}")
                     raise UserError(_("Error activating item: %s") % response.text)
             except Exception as e:
                 _logger.error(f"Exception while activating item {rec.meli_id}: {str(e)}")
+
+    def action_close(self):
+        for rec in self:
+            if not rec.meli_id:
+                rec.status = 'closed'
+                continue
+            
+            rec.instance_id.check_token_validity()
+            url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
+            try:
+                response = rec.instance_id._call_api('PUT', url, json={'status': 'closed'})
+                if response.status_code == 200:
+                    rec.status = 'closed'
+                    rec.message_post(body="Publicación cerrada en MercadoLibre.")
+                    _logger.info(f"Successfully closed item {rec.meli_id}")
+                else:
+                    _logger.error(f"Error closing item {rec.meli_id}: {response.text}")
+                    raise UserError(_("Error closing item: %s") % response.text)
+            except Exception as e:
+                _logger.error(f"Exception while closing item {rec.meli_id}: {str(e)}")
+
+    def unlink(self):
+        for rec in self:
+            if rec.status not in ['draft', 'closed', 'error']:
+                raise UserError(_("No puedes eliminar una publicación activa o pausada en MercadoLibre. Cérrala primero."))
+        return super().unlink()
 
     def action_check_status(self):
         """Fetch current item status from ML and update Odoo record."""
