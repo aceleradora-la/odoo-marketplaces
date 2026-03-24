@@ -63,13 +63,18 @@ class MeliController(http.Controller):
             _logger.warning("ML Image Request: Record %s(%s) not found", model, id)
             return werkzeug.exceptions.NotFound()
 
-        image_base64 = record[field]
-        if not image_base64:
+        image_raw = record[field]
+        if not image_raw:
             _logger.warning("ML Image Request: Field %s in %s(%s) is empty", field, model, id)
             return werkzeug.exceptions.NotFound()
 
         try:
-            image_data = base64.b64decode(image_base64)
+            # Odoo 18/19: fields.Image/Binary may return raw bytes directly.
+            # Older versions return a base64-encoded string.
+            if isinstance(image_raw, bytes):
+                image_data = image_raw
+            else:
+                image_data = base64.b64decode(image_raw)
             content_type = _detect_image_mime(image_data)
             return request.make_response(image_data, [('Content-Type', content_type)])
         except Exception as e:
