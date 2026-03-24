@@ -8,7 +8,7 @@
                 <header>
                     <button name="action_get_authorization_url" string="1. Get Auth URL" type="object" class="oe_highlight" invisible="state == 'authenticated'"/>
                     <button name="action_get_token" string="2. Fetch Token" type="object" class="oe_highlight" invisible="state == 'authenticated'"/>
-                    <button name="action_refresh_token" string="Refresh Token" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_refresh_token" string="Refresh Token" type="object" invisible="state == 'draft'"/>
                     <button name="action_sync_root_categories" string="Sync MLA Categories" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_items" string="Sync Items" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_orders" string="Sync Orders" type="object" invisible="state != 'authenticated'"/>
