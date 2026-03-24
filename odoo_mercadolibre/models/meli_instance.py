@@ -77,7 +77,10 @@ class MeliInstance(models.Model):
     def action_refresh_token(self):
         for rec in self:
             if not rec.refresh_token:
-                _logger.error(f"Cannot refresh token for {rec.name}: No refresh_token found!")
+                msg = f"Cannot refresh token for {rec.name}: No refresh_token found!"
+                _logger.error(msg)
+                if not self.env.context.get('cron_mode'):
+                     raise UserError(_(msg))
                 continue
             
             url = "https://api.mercadolibre.com/oauth/token"
@@ -100,6 +103,8 @@ class MeliInstance(models.Model):
             except Exception as e:
                 rec.write({'state': 'error'})
                 _logger.error(f"Error refreshing ML token for instance {rec.name}: {str(e)}")
+                if not self.env.context.get('cron_mode'):
+                     raise UserError(_("Error refreshing token: %s") % str(e))
 
     def _process_token_response(self, response):
         if response.status_code == 200:
@@ -151,12 +156,18 @@ class MeliInstance(models.Model):
         
         if response.status_code == 401:
             _logger.warning(f"401 Unauthorized for {url}, attempting token refresh for {self.name}...")
+            
+            old_token = self.access_token
             # Use sudo to avoid any permission issue during write
             self.sudo().action_refresh_token()
             
             # Explicitly force-refresh cache from DB
             self.invalidate_recordset(['access_token', 'refresh_token'])
             new_token = self.sudo().access_token
+            
+            if not new_token or new_token == old_token:
+                _logger.error(f"Token refresh FAILED for {self.name}. No new token obtained.")
+                return response # Return the 401 response without retrying
             
             _logger.info(f"Retrying ML API Call with new token ending in ...{new_token[-10:] if new_token else 'None'}")
             headers['Authorization'] = f'Bearer {new_token}'
@@ -296,10 +307,10 @@ class MeliInstance(models.Model):
     @api.model
     def cron_sync_orders(self):
         instances = self.search([('state', '=', 'authenticated')])
-        instances.action_sync_orders()
+        instances.with_context(cron_mode=True).action_sync_orders()
 
     def action_sync_items(self):
         self.ensure_one()
-        self.env['meli.item'].action_import_items(self)
+        self.env['meli.item'].with_context(cron_mode=self.env.context.get('cron_mode')).action_import_items(self)
 
 

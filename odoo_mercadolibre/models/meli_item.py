@@ -365,5 +365,5 @@ class MeliItem(models.Model):
     @api.model
     def cron_sync_price_stock(self):
         items = self.search([('status', '=', 'active')])
-        items.action_sync_price_stock()
+        items.with_context(cron_mode=True).action_sync_price_stock()
 
