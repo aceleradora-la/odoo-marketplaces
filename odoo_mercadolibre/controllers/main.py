@@ -54,29 +54,54 @@ class MeliController(http.Controller):
         '/meli_image/<model>/<int:id>/<field>/<string:filename>'
     ], type='http', auth="public")
     def meli_image(self, model, id, field, **kwargs):
-        """Serve product images to MercadoLibre API with correct Content-Type."""
+        """Serve product images to MercadoLibre API."""
         if model not in ['product.template', 'meli.product.image']:
             return werkzeug.exceptions.Forbidden()
 
-        record = request.env[model].sudo().browse(id)
+        # bin_size=False forces the ORM to return actual binary data, not the file size
+        record = request.env[model].sudo().with_context(bin_size=False).browse(id)
         if not record.exists():
-            _logger.warning("ML Image Request: Record %s(%s) not found", model, id)
+            _logger.warning("ML Image: record %s(%s) not found", model, id)
             return werkzeug.exceptions.NotFound()
 
-        image_raw = record[field]
-        if not image_raw:
-            _logger.warning("ML Image Request: Field %s in %s(%s) is empty", field, model, id)
-            return werkzeug.exceptions.NotFound()
-
+        # --- Primary: use ir.binary (Odoo 16+ official image streaming) ---
         try:
-            # Odoo 18/19: fields.Image/Binary may return raw bytes directly.
-            # Older versions return a base64-encoded string.
+            stream = request.env['ir.binary'].sudo()._get_stream_from(
+                record, field_name=field
+            )
+            response = stream.get_response()
+            _logger.info("ML Image: served %s(%s).%s via ir.binary", model, id, field)
+            return response
+        except Exception as e:
+            _logger.warning(
+                "ML Image: ir.binary failed for %s(%s).%s (%s) — falling back to direct read",
+                model, id, field, str(e)
+            )
+
+        # --- Fallback: read binary data directly ---
+        try:
+            image_raw = record[field]
+            _logger.info(
+                "ML Image: %s(%s).%s — type=%s len=%s",
+                model, id, field,
+                type(image_raw).__name__,
+                len(image_raw) if image_raw else 0
+            )
+
+            if not image_raw:
+                return werkzeug.exceptions.NotFound()
+
             if isinstance(image_raw, bytes):
                 image_data = image_raw
             else:
                 image_data = base64.b64decode(image_raw)
+
             content_type = _detect_image_mime(image_data)
+            _logger.info(
+                "ML Image: fallback serving %s bytes as %s", len(image_data), content_type
+            )
             return request.make_response(image_data, [('Content-Type', content_type)])
+
         except Exception as e:
-            _logger.error("Error serving ML image for %s(%s): %s", model, id, str(e))
+            _logger.error("ML Image: error serving %s(%s).%s: %s", model, id, field, str(e))
             return werkzeug.exceptions.NotFound()
