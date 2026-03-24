@@ -1,6 +1,5 @@
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
-import requests
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -71,7 +70,7 @@ class MeliItem(models.Model):
             'title': self.name,
             'category_id': self.meli_category_id.meli_id,
             'price': self.price,
-            'currency_id': 'ARS',  # Could be dynamic
+            'currency_id': self.instance_id.currency_ml if self.instance_id else 'ARS',
             'available_quantity': self.available_quantity,
             'buying_mode': 'buy_it_now',
             'listing_type_id': self.listing_type,
