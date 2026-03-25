@@ -58,50 +58,58 @@ class MeliController(http.Controller):
         if model not in ['product.template', 'meli.product.image']:
             return werkzeug.exceptions.Forbidden()
 
-        # bin_size=False forces the ORM to return actual binary data, not the file size
-        record = request.env[model].sudo().with_context(bin_size=False).browse(id)
+        env = request.env
+        record = env[model].sudo().browse(id)
         if not record.exists():
             _logger.warning("ML Image: record %s(%s) not found", model, id)
             return werkzeug.exceptions.NotFound()
 
-        # --- Primary: use ir.binary (Odoo 16+ official image streaming) ---
-        try:
-            stream = request.env['ir.binary'].sudo()._get_stream_from(
-                record, field_name=field
-            )
-            response = stream.get_response()
-            _logger.info("ML Image: served %s(%s).%s via ir.binary", model, id, field)
-            return response
-        except Exception as e:
-            _logger.warning(
-                "ML Image: ir.binary failed for %s(%s).%s (%s) — falling back to direct read",
-                model, id, field, str(e)
-            )
-
-        # --- Fallback: read binary data directly ---
-        try:
-            image_raw = record[field]
-            _logger.info(
-                "ML Image: %s(%s).%s — type=%s len=%s",
-                model, id, field,
-                type(image_raw).__name__,
-                len(image_raw) if image_raw else 0
-            )
-
-            if not image_raw:
-                return werkzeug.exceptions.NotFound()
-
-            if isinstance(image_raw, bytes):
-                image_data = image_raw
-            else:
-                image_data = base64.b64decode(image_raw)
-
-            content_type = _detect_image_mime(image_data)
-            _logger.info(
-                "ML Image: fallback serving %s bytes as %s", len(image_data), content_type
-            )
-            return request.make_response(image_data, [('Content-Type', content_type)])
-
-        except Exception as e:
-            _logger.error("ML Image: error serving %s(%s).%s: %s", model, id, field, str(e))
+        image_data = self._read_image_bytes(env, model, id, field, record)
+        if not image_data:
+            _logger.warning("ML Image: no data for %s(%s).%s", model, id, field)
             return werkzeug.exceptions.NotFound()
+
+        content_type = _detect_image_mime(image_data)
+        _logger.info(
+            "ML Image: serving %s(%s).%s — %d bytes as %s",
+            model, id, field, len(image_data), content_type
+        )
+        return request.make_response(
+            image_data,
+            [('Content-Type', content_type),
+             ('Content-Length', str(len(image_data)))]
+        )
+
+    def _read_image_bytes(self, env, model, id, field, record):
+        """
+        Read raw image bytes from a Binary/Image field.
+        Tries multiple strategies to handle Odoo 16-19 storage differences.
+        """
+        # Strategy 1: read via ORM with bin_size=False (returns base64 string or bytes)
+        try:
+            values = record.with_context(bin_size=False).read([field])
+            raw = values[0].get(field) if values else None
+            if raw:
+                data = raw if isinstance(raw, bytes) else base64.b64decode(raw)
+                if len(data) > 16:   # sanity check: any real image is > 16 bytes
+                    _logger.info("ML Image: strategy 1 (ORM read) — %d bytes", len(data))
+                    return data
+        except Exception as e:
+            _logger.warning("ML Image: strategy 1 failed: %s", e)
+
+        # Strategy 2: read directly from ir.attachment
+        try:
+            attachment = env['ir.attachment'].sudo().search([
+                ('res_model', '=', model),
+                ('res_id', '=', id),
+                ('res_field', '=', field),
+            ], limit=1, order='id desc')
+            if attachment and attachment.datas:
+                data = base64.b64decode(attachment.datas)
+                if len(data) > 16:
+                    _logger.info("ML Image: strategy 2 (ir.attachment) — %d bytes", len(data))
+                    return data
+        except Exception as e:
+            _logger.warning("ML Image: strategy 2 failed: %s", e)
+
+        return None
