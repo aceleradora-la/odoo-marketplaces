@@ -75,6 +75,7 @@ class MeliInstance(models.Model):
         url = (
             f"https://{auth_domain}/authorization"
             f"?response_type=code&client_id={self.app_id}&redirect_uri={self.redirect_uri}"
+            f"&access_type=offline"
         )
         return {
             'type': 'ir.actions.act_url',
@@ -148,16 +149,29 @@ class MeliInstance(models.Model):
             expires_in = res_data.get('expires_in', 21600)
             user_id = str(res_data.get('user_id', ''))
             access_token = res_data.get('access_token', '').strip()
-            refresh_token = res_data.get('refresh_token', '').strip()
+            new_refresh_token = res_data.get('refresh_token', '').strip()
 
-            self.sudo().write({
+            # Preserve existing refresh_token if ML doesn't return a new one
+            # (ML only returns refresh_token on initial auth with access_type=offline)
+            vals = {
                 'access_token': access_token,
-                'refresh_token': refresh_token,
                 'token_expiration': fields.Datetime.now() + datetime.timedelta(seconds=expires_in),
                 'state': 'authenticated',
-                'seller_id': user_id,
                 'authorization_code': False,
-            })
+            }
+            if new_refresh_token:
+                vals['refresh_token'] = new_refresh_token
+                _logger.info("ML OAuth: refresh_token received and saved for %s", self.name)
+            else:
+                _logger.warning(
+                    "ML OAuth: no refresh_token in response for %s. "
+                    "Ensure the ML app has 'offline_access' enabled and re-authorize with access_type=offline.",
+                    self.name
+                )
+            if user_id:
+                vals['seller_id'] = user_id
+
+            self.sudo().write(vals)
         else:
             error_msg = response.text
             self.write({'state': 'error'})
