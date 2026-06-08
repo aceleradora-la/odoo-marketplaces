@@ -54,6 +54,12 @@ class MeliInstance(models.Model):
 
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (ML Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    warehouse_full_id = fields.Many2one(
+        'stock.warehouse',
+        string='Almacén ML FULL',
+        help='Almacén de Odoo que representa el stock en los centros de fulfillment de MercadoLibre. '
+             'Los pedidos FULL se despachan desde aquí y se validan automáticamente.',
+    )
     seller_id = fields.Char('Seller ID', readonly=True)
 
     state = fields.Selection([
@@ -332,13 +338,78 @@ class MeliInstance(models.Model):
 
         return partner
 
+    def _is_full_order(self, order):
+        """
+        Detect if the ML order was fulfilled by MercadoLibre (FULL/fulfillment).
+        ML marks these orders with the 'fulfillment' tag in order.tags.
+        Also checks shipping.logistic_type as a fallback.
+        """
+        tags = order.get('tags') or []
+        if 'fulfillment' in tags:
+            return True
+        logistic_type = (order.get('shipping') or {}).get('logistic_type', '')
+        return logistic_type == 'fulfillment'
+
+    def _register_payment_on_order(self, so, order):
+        """
+        Create invoice and register payment for a self-fulfilled paid ML order.
+        The payment amount comes from the ML order total.
+        """
+        try:
+            so._create_invoices()
+            invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
+            if not invoice:
+                _logger.warning("SO %s: no draft invoice found after _create_invoices", so.name)
+                return
+            invoice.action_post()
+
+            payment_total = order.get('total_amount') or sum(
+                l.get('unit_price', 0) * l.get('quantity', 1)
+                for l in order.get('order_items', [])
+            )
+            if payment_total <= 0:
+                _logger.warning("SO %s: payment_total is 0 — skipping payment registration", so.name)
+                return
+
+            journal = self.env['account.journal'].search(
+                [('type', 'in', ('bank', 'cash')), ('company_id', '=', so.company_id.id)],
+                limit=1,
+            )
+            if not journal:
+                _logger.warning("SO %s: no bank/cash journal found — skipping payment registration", so.name)
+                return
+
+            payment_register = self.env['account.payment.register'].with_context(
+                active_model='account.move',
+                active_ids=invoice.ids,
+            ).create({
+                'amount': payment_total,
+                'journal_id': journal.id,
+                'payment_date': fields.Date.today(),
+                'communication': f"ML {so.meli_order_id}",
+            })
+            payment_register.action_create_payments()
+            _logger.info("Payment registered for SO %s (ML order %s)", so.name, so.meli_order_id)
+
+        except Exception as e:
+            _logger.error(
+                "Could not register payment for SO %s: %s — manual payment required",
+                so.name, str(e),
+            )
+
     def _process_single_order(self, order):
         """
         Create a confirmed sale.order from an ML order dict.
-        - Skips if the ML order already exists in Odoo.
-        - Finds/creates partner with buyer contact data.
-        - Confirms the SO (reserves stock via picking).
-        - Only processes orders in 'paid' or 'payment_required' status.
+
+        FULL orders (fulfilled by MercadoLibre):
+          - Use the configured warehouse_full_id
+          - Auto-validate delivery (stock already at ML warehouse)
+          - Register payment
+
+        Self-fulfilled orders (seller ships):
+          - Use default warehouse
+          - Reserve stock only (delivery pending physical dispatch)
+          - Register payment so accounting is up to date
         """
         order_id = str(order.get('id'))
         if self.env['sale.order'].search([('meli_order_id', '=', order_id)], limit=1):
@@ -349,6 +420,7 @@ class MeliInstance(models.Model):
             _logger.info("ML order %s skipped — status=%s", order_id, ml_status)
             return
 
+        is_full = self._is_full_order(order)
         buyer = order.get('buyer') or {}
         partner = self._get_or_create_partner(buyer)
 
@@ -377,29 +449,48 @@ class MeliInstance(models.Model):
             _logger.warning("ML order %s has no matching products — order not created", order_id)
             return
 
-        so = self.env['sale.order'].create({
+        so_vals = {
             'partner_id': partner.id,
             'meli_order_id': order_id,
             'meli_instance_id': self.id,
             'order_line': order_lines,
-        })
-        so.action_confirm()
-        _logger.info("Created sale order %s for ML order %s (instance: %s)", so.name, order_id, self.name)
+        }
+        if is_full and self.warehouse_full_id:
+            so_vals['warehouse_id'] = self.warehouse_full_id.id
 
-        # Auto-validate delivery for paid orders so stock is decremented immediately.
-        # This matches the ML semantics: payment is already confirmed when we receive the order.
-        if ml_status == 'paid':
-            try:
-                for picking in so.picking_ids.filtered(lambda p: p.state not in ('done', 'cancel')):
-                    for move in picking.move_ids:
-                        move.quantity = move.product_uom_qty
-                    picking.with_context(skip_immediate=True).button_validate()
-                _logger.info("Auto-validated delivery for SO %s (ML order %s)", so.name, order_id)
-            except Exception as e:
-                _logger.error(
-                    "Could not auto-validate delivery for SO %s: %s — stock will need manual validation",
-                    so.name, str(e),
+        so = self.env['sale.order'].create(so_vals)
+        so.action_confirm()
+
+        fulfillment_label = 'FULL (ML Fulfillment)' if is_full else 'Envío propio'
+        _logger.info(
+            "Created SO %s for ML order %s [%s] (instance: %s)",
+            so.name, order_id, fulfillment_label, self.name,
+        )
+
+        if is_full:
+            # Stock is physically at ML — auto-validate delivery to reflect reality
+            if not self.warehouse_full_id:
+                _logger.warning(
+                    "ML order %s is FULL but no warehouse_full_id configured on instance %s. "
+                    "Delivery will NOT be auto-validated.",
+                    order_id, self.name,
                 )
+            else:
+                try:
+                    for picking in so.picking_ids.filtered(lambda p: p.state not in ('done', 'cancel')):
+                        for move in picking.move_ids:
+                            move.quantity = move.product_uom_qty
+                        picking.with_context(skip_immediate=True).button_validate()
+                    _logger.info("Auto-validated FULL delivery for SO %s", so.name)
+                except Exception as e:
+                    _logger.error(
+                        "Could not auto-validate FULL delivery for SO %s: %s",
+                        so.name, str(e),
+                    )
+
+        # Register payment for paid orders regardless of fulfillment type
+        if ml_status == 'paid':
+            self._register_payment_on_order(so, order)
 
     def action_sync_orders(self):
         for rec in self:

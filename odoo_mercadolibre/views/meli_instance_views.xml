@@ -33,6 +33,8 @@
                         <group string="Configuration">
                             <field name="pricelist_id"/>
                             <field name="stock_location_ids" widget="many2many_tags"/>
+                            <field name="warehouse_full_id"
+                                   help="Opcional. Almacén que representa el stock en centros ML FULL. Si se configura, los pedidos FULL se despachan desde aquí y se validan automáticamente."/>
                         </group>
                         <group string="Authentication Status">
                             <field name="authorization_code" invisible="state == 'authenticated'"/>
