@@ -3,6 +3,7 @@ from odoo.exceptions import UserError
 import requests
 import datetime
 import logging
+import io
 
 _logger = logging.getLogger(__name__)
 
@@ -60,6 +61,18 @@ class MeliInstance(models.Model):
         ('authenticated', 'Authenticated'),
         ('error', 'Error')
     ], string='Status', default='draft', readonly=True)
+
+    webhook_url = fields.Char(
+        'Webhook URL',
+        compute='_compute_webhook_url',
+        help='Configure esta URL en el Panel de Desarrolladores de MercadoLibre → Notificaciones',
+    )
+
+    @api.depends('site_id')
+    def _compute_webhook_url(self):
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
+        for rec in self:
+            rec.webhook_url = f"{base_url}/meli/webhook"
 
     @api.depends('site_id')
     def _compute_currency_ml(self):
@@ -279,51 +292,114 @@ class MeliInstance(models.Model):
             _logger.error("Exception fetching seller info for %s: %s", self.name, str(e))
         return None
 
+    def _get_or_create_partner(self, buyer):
+        """Find or create a res.partner from ML buyer data, enriching existing records."""
+        meli_user_id = str(buyer.get('id', ''))
+        nickname = buyer.get('nickname') or 'MercadoLibre Guest'
+        email = buyer.get('email', '')
+        phone = buyer.get('phone', {}).get('number', '') if isinstance(buyer.get('phone'), dict) else ''
+
+        # Shipping address from buyer (available in some ML order payloads)
+        shipping = buyer.get('shipping_address') or {}
+        street = shipping.get('address_line', '')
+        city = shipping.get('city', {}).get('name', '') if isinstance(shipping.get('city'), dict) else ''
+        zip_code = shipping.get('zip_code', '')
+
+        partner = (
+            self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
+            if meli_user_id else self.env['res.partner']
+        )
+        if not partner and email:
+            partner = self.env['res.partner'].search([('email', '=', email)], limit=1)
+
+        vals = {'meli_user_id': meli_user_id, 'meli_nickname': nickname}
+        if email and not partner.email if partner else email:
+            vals['email'] = email
+        if phone and not partner.phone if partner else phone:
+            vals['phone'] = phone
+        if street and not partner.street if partner else street:
+            vals['street'] = street
+        if city and not partner.city if partner else city:
+            vals['city'] = city
+        if zip_code and not partner.zip if partner else zip_code:
+            vals['zip'] = zip_code
+
+        if partner:
+            partner.write(vals)
+        else:
+            vals['name'] = nickname
+            partner = self.env['res.partner'].create(vals)
+
+        return partner
+
     def _process_single_order(self, order):
-        """Create a sale.order from an ML order dict if it doesn't already exist."""
+        """
+        Create a confirmed sale.order from an ML order dict.
+        - Skips if the ML order already exists in Odoo.
+        - Finds/creates partner with buyer contact data.
+        - Confirms the SO (reserves stock via picking).
+        - Only processes orders in 'paid' or 'payment_required' status.
+        """
         order_id = str(order.get('id'))
         if self.env['sale.order'].search([('meli_order_id', '=', order_id)], limit=1):
             return
 
-        buyer = order.get('buyer') or {}
-        nickname = buyer.get('nickname') or 'MercadoLibre Guest'
-        meli_user_id = str(buyer.get('id', ''))
+        ml_status = order.get('status', '')
+        if ml_status not in ('paid', 'payment_required'):
+            _logger.info("ML order %s skipped — status=%s", order_id, ml_status)
+            return
 
-        partner = self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
-        if not partner:
-            partner = self.env['res.partner'].search([('name', '=', nickname)], limit=1)
-        if not partner:
-            partner = self.env['res.partner'].create({
-                'name': nickname,
-                'meli_user_id': meli_user_id,
-                'meli_nickname': nickname,
-            })
-        elif not partner.meli_user_id:
-            partner.write({'meli_user_id': meli_user_id, 'meli_nickname': nickname})
+        buyer = order.get('buyer') or {}
+        partner = self._get_or_create_partner(buyer)
 
         order_lines = []
         for item in order.get('order_items', []):
             meli_item_id = item.get('item', {}).get('id')
             qty = item.get('quantity', 1)
             price = item.get('unit_price', 0)
-            m_item = self.env['meli.item'].search([('meli_id', '=', meli_item_id)], limit=1)
+            m_item = self.env['meli.item'].search([
+                ('meli_id', '=', meli_item_id),
+                ('instance_id', '=', self.id),
+            ], limit=1)
             if m_item and m_item.product_id:
                 order_lines.append((0, 0, {
                     'product_id': m_item.product_id.product_variant_id.id,
                     'product_uom_qty': qty,
                     'price_unit': price,
                 }))
+            else:
+                _logger.warning(
+                    "ML order %s: item %s not found in instance %s — line skipped",
+                    order_id, meli_item_id, self.name,
+                )
 
-        if order_lines:
-            so = self.env['sale.order'].create({
-                'partner_id': partner.id,
-                'meli_order_id': order_id,
-                'meli_instance_id': self.id,
-                'state': 'draft',
-                'order_line': order_lines,
-            })
-            so.action_confirm()
-            _logger.info("Created sale order %s for ML order %s", so.name, order_id)
+        if not order_lines:
+            _logger.warning("ML order %s has no matching products — order not created", order_id)
+            return
+
+        so = self.env['sale.order'].create({
+            'partner_id': partner.id,
+            'meli_order_id': order_id,
+            'meli_instance_id': self.id,
+            'order_line': order_lines,
+        })
+        so.action_confirm()
+        _logger.info("Created sale order %s for ML order %s (instance: %s)", so.name, order_id, self.name)
+
+        # Auto-validate delivery for paid orders so stock is decremented immediately.
+        # This matches the ML semantics: payment is already confirmed when we receive the order.
+        if ml_status == 'paid':
+            try:
+                for picking in so.picking_ids.filtered(lambda p: p.state not in ('done', 'cancel')):
+                    for move in picking.move_ids:
+                        move.quantity = move.product_uom_qty
+                    picking.with_context(skip_immediate=True).button_validate()
+                _logger.info("Auto-validated delivery for SO %s (ML order %s)", so.name, order_id)
+            except Exception as e:
+                _logger.error(
+                    "Could not auto-validate delivery for SO %s: %s — stock will need manual validation",
+                    so.name, str(e),
+                )
 
     def action_sync_orders(self):
         for rec in self:

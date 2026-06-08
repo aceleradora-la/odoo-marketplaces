@@ -2,6 +2,7 @@ from odoo import http
 from odoo.http import request
 import werkzeug
 import base64
+import json
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -21,6 +22,48 @@ def _detect_image_mime(image_data):
 
 
 class MeliController(http.Controller):
+
+    @http.route('/meli/webhook', type='http', auth='public', methods=['POST'], csrf=False)
+    def meli_webhook(self, **kwargs):
+        """
+        Receives real-time notifications from MercadoLibre.
+        ML sends: {"resource": "/orders/12345", "user_id": 123, "topic": "orders_v2", ...}
+        Must respond 200 quickly; processing is done inline (no queue_job dependency).
+        """
+        try:
+            payload = json.loads(request.httprequest.data or '{}')
+        except Exception:
+            payload = {}
+
+        topic = payload.get('topic', '')
+        user_id = str(payload.get('user_id', ''))
+        resource = payload.get('resource', '')
+
+        _logger.info("ML Webhook received — topic=%s user_id=%s resource=%s", topic, user_id, resource)
+
+        if not user_id or not resource:
+            return request.make_response('{}', [('Content-Type', 'application/json')])
+
+        if 'orders' in topic:
+            try:
+                instance = request.env['meli.instance'].sudo().search(
+                    [('seller_id', '=', user_id), ('state', '=', 'authenticated')], limit=1
+                )
+                if not instance:
+                    _logger.warning("ML Webhook: no authenticated instance for user_id=%s", user_id)
+                else:
+                    # resource = "/orders/12345678" or "/orders/v2/12345678"
+                    order_id = resource.rstrip('/').split('/')[-1]
+                    url = f"https://api.mercadolibre.com/orders/{order_id}"
+                    resp = instance._call_api('GET', url)
+                    if resp.status_code == 200:
+                        instance.sudo()._process_single_order(resp.json())
+                    else:
+                        _logger.error("ML Webhook: error fetching order %s — %s", order_id, resp.text)
+            except Exception as e:
+                _logger.error("ML Webhook: exception processing order notification — %s", str(e))
+
+        return request.make_response('{}', [('Content-Type', 'application/json')])
 
     @http.route('/meli/auth', type='http', auth="public")
     def meli_auth(self, **kwargs):
