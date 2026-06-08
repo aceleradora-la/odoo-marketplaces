@@ -49,6 +49,22 @@
                                    string="IDs registrados"/>
                         </group>
                     </group>
+                    <notebook>
+                        <page string="Métodos de Pago" name="payment_methods">
+                            <p class="text-muted">
+                                Mapeá cada gateway de TiendaNube al diario contable de Odoo correspondiente.
+                                Si no hay mapeo configurado para un gateway, se usará el primer diario banco/caja disponible.
+                            </p>
+                            <field name="payment_method_ids">
+                                <list editable="bottom">
+                                    <field name="gateway_name" placeholder="ej: mercadopago"/>
+                                    <field name="payment_method_name" placeholder="ej: credit_card (opcional)"/>
+                                    <field name="journal_id"/>
+                                    <field name="description" placeholder="Referencia interna"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
                 </sheet>
                 <chatter/>
             </form>

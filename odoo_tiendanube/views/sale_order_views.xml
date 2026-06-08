@@ -9,6 +9,8 @@
                 <group string="TiendaNube" invisible="not tn_order_id">
                     <field name="tn_order_id" readonly="1"/>
                     <field name="tn_instance_id" readonly="1"/>
+                    <field name="tn_gateway" readonly="1"/>
+                    <field name="tn_payment_method" readonly="1"/>
                 </group>
             </xpath>
         </field>

@@ -48,6 +48,10 @@ class TnInstance(models.Model):
     # Registered webhook IDs (JSON list) — stored to allow cleanup
     webhook_ids_json = fields.Char('Registered Webhook IDs', readonly=True)
 
+    payment_method_ids = fields.One2many(
+        'tn.payment.method', 'instance_id', string='Mapeos de Métodos de Pago'
+    )
+
     @api.depends('tn_store_id')
     def _compute_webhook_url(self):
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
@@ -316,10 +320,15 @@ class TnInstance(models.Model):
             _logger.warning("TN order %s has no matching products — order not created", tn_order_id)
             return
 
+        gateway = (order_data.get('gateway') or '').lower().strip()
+        payment_method = ((order_data.get('payment_details') or {}).get('method') or '').lower().strip()
+
         so = self.env['sale.order'].create({
             'partner_id': partner.id,
             'tn_order_id': tn_order_id,
             'tn_instance_id': self.id,
+            'tn_gateway': gateway,
+            'tn_payment_method': payment_method,
             'order_line': order_lines,
         })
         so.action_confirm()
@@ -327,6 +336,55 @@ class TnInstance(models.Model):
 
         # Register payment
         self._register_payment_on_order(so, order_data)
+
+    def _resolve_payment_journal(self, order_data):
+        """
+        Resolve the Odoo journal to use for this order based on its TN gateway.
+        Lookup order: specific gateway+method → gateway only → instance default → any bank/cash
+        """
+        gateway = (order_data.get('gateway') or '').lower().strip()
+        method = ((order_data.get('payment_details') or {}).get('method') or '').lower().strip()
+
+        if gateway:
+            # Try exact match: gateway + method
+            mapping = self.env['tn.payment.method'].search([
+                ('instance_id', '=', self.id),
+                ('gateway_name', '=ilike', gateway),
+                ('payment_method_name', '=ilike', method),
+            ], limit=1)
+            if not mapping:
+                # Fallback: gateway only (method left empty in the mapping)
+                mapping = self.env['tn.payment.method'].search([
+                    ('instance_id', '=', self.id),
+                    ('gateway_name', '=ilike', gateway),
+                    ('payment_method_name', '=', False),
+                ], limit=1)
+                if not mapping:
+                    mapping = self.env['tn.payment.method'].search([
+                        ('instance_id', '=', self.id),
+                        ('gateway_name', '=ilike', gateway),
+                        ('payment_method_name', 'in', (False, '')),
+                    ], limit=1)
+            if mapping:
+                _logger.info(
+                    "TN payment: gateway=%s method=%s → journal=%s",
+                    gateway, method, mapping.journal_id.name,
+                )
+                return mapping.journal_id
+
+        # No mapping configured — fall back to first bank/cash journal
+        journal = self.env['account.journal'].search(
+            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.env.company.id)],
+            limit=1,
+        )
+        if not journal:
+            _logger.warning("TN: no bank/cash journal found for store %s", self.name)
+        else:
+            _logger.warning(
+                "TN: no payment mapping for gateway='%s' in store %s — using fallback journal '%s'",
+                gateway, self.name, journal.name,
+            )
+        return journal
 
     def _register_payment_on_order(self, so, order_data):
         try:
@@ -340,12 +398,8 @@ class TnInstance(models.Model):
             if total <= 0:
                 return
 
-            journal = self.env['account.journal'].search(
-                [('type', 'in', ('bank', 'cash')), ('company_id', '=', so.company_id.id)],
-                limit=1,
-            )
+            journal = self._resolve_payment_journal(order_data)
             if not journal:
-                _logger.warning("TN: no bank/cash journal — skipping payment for SO %s", so.name)
                 return
 
             self.env['account.payment.register'].with_context(
@@ -357,7 +411,10 @@ class TnInstance(models.Model):
                 'payment_date': fields.Date.today(),
                 'communication': f"TN {so.tn_order_id}",
             }).action_create_payments()
-            _logger.info("Payment registered for SO %s (TN order %s)", so.name, so.tn_order_id)
+            _logger.info(
+                "Payment registered for SO %s (TN order %s) via journal '%s'",
+                so.name, so.tn_order_id, journal.name,
+            )
         except Exception as e:
             _logger.error("TN: could not register payment for SO %s: %s", so.name, str(e))
 
