@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_product_form" model="ir.ui.view">
+        <field name="name">tn.product.form</field>
+        <field name="model">tn.product</field>
+        <field name="arch" type="xml">
+            <form string="TiendaNube Product">
+                <header>
+                    <button name="action_publish" string="Publicar" type="object"
+                            class="oe_highlight" invisible="status == 'active'"/>
+                    <button name="action_update" string="Actualizar en TN" type="object"
+                            invisible="status != 'active'"/>
+                    <button name="action_sync_price_stock" string="Sync Precio/Stock" type="object"
+                            invisible="status != 'active'"/>
+                    <button name="action_delete" string="Eliminar de TN" type="object"
+                            invisible="status != 'active'"
+                            confirm="¿Eliminar el producto de TiendaNube? Esta acción no se puede deshacer."/>
+                    <field name="status" widget="statusbar" statusbar_visible="draft,active"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name"/></h1>
+                    </div>
+                    <group>
+                        <group string="Vinculación">
+                            <field name="instance_id"/>
+                            <field name="product_id"/>
+                            <field name="tn_product_id" readonly="1"/>
+                            <field name="tn_url" widget="url" readonly="1"/>
+                        </group>
+                        <group string="Variantes">
+                            <field name="variant_count" string="Cantidad de variantes"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Variantes en TiendaNube">
+                            <field name="variant_ids" readonly="1">
+                                <list>
+                                    <field name="tn_variant_id"/>
+                                    <field name="sku"/>
+                                    <field name="product_id"/>
+                                    <field name="price"/>
+                                    <field name="stock"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_tn_product_list" model="ir.ui.view">
+        <field name="name">tn.product.list</field>
+        <field name="model">tn.product</field>
+        <field name="arch" type="xml">
+            <list string="TiendaNube Products">
+                <field name="name"/>
+                <field name="instance_id"/>
+                <field name="product_id"/>
+                <field name="tn_product_id"/>
+                <field name="status" widget="badge"
+                       decoration-success="status == 'active'"
+                       decoration-info="status == 'draft'"
+                       decoration-danger="status == 'error'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_tn_product" model="ir.actions.act_window">
+        <field name="name">Productos TiendaNube</field>
+        <field name="res_model">tn.product</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_tn_products"
+              name="Productos"
+              parent="tn_menu_products_root"
+              action="action_tn_product"
+              sequence="10"/>
+</odoo>

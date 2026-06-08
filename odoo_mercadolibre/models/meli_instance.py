@@ -3,6 +3,7 @@ from odoo.exceptions import UserError
 import requests
 import datetime
 import logging
+import io
 
 _logger = logging.getLogger(__name__)
 
@@ -53,6 +54,15 @@ class MeliInstance(models.Model):
 
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (ML Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    payment_method_ids = fields.One2many(
+        'meli.payment.method', 'instance_id', string='Mapeos de Métodos de Pago'
+    )
+    warehouse_full_id = fields.Many2one(
+        'stock.warehouse',
+        string='Almacén ML FULL',
+        help='Almacén de Odoo que representa el stock en los centros de fulfillment de MercadoLibre. '
+             'Los pedidos FULL se despachan desde aquí y se validan automáticamente.',
+    )
     seller_id = fields.Char('Seller ID', readonly=True)
 
     state = fields.Selection([
@@ -60,6 +70,18 @@ class MeliInstance(models.Model):
         ('authenticated', 'Authenticated'),
         ('error', 'Error')
     ], string='Status', default='draft', readonly=True)
+
+    webhook_url = fields.Char(
+        'Webhook URL',
+        compute='_compute_webhook_url',
+        help='Configure esta URL en el Panel de Desarrolladores de MercadoLibre → Notificaciones',
+    )
+
+    @api.depends('site_id')
+    def _compute_webhook_url(self):
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
+        for rec in self:
+            rec.webhook_url = f"{base_url}/meli/webhook"
 
     @api.depends('site_id')
     def _compute_currency_ml(self):
@@ -279,51 +301,333 @@ class MeliInstance(models.Model):
             _logger.error("Exception fetching seller info for %s: %s", self.name, str(e))
         return None
 
+    def action_fetch_payment_methods(self):
+        """
+        Fetch all payment methods for this site from ML (public endpoint, no token needed)
+        and create/update meli.payment.method records so the user can map them to journals.
+        """
+        self.ensure_one()
+        url = f"https://api.mercadolibre.com/sites/{self.site_id}/payment_methods"
+        # This endpoint is public but we use _call_api for consistency
+        resp = self._call_api('GET', url)
+        if resp.status_code != 200:
+            raise UserError(_("Error al consultar métodos de pago de ML: %s") % resp.text)
+
+        methods = resp.json()
+        created = 0
+        for m in methods:
+            mid = m.get('id', '')
+            mtype = m.get('payment_type_id', '')
+            mname = m.get('name', mid)
+            existing = self.env['meli.payment.method'].search([
+                ('instance_id', '=', self.id),
+                ('payment_method_id', '=', mid),
+            ], limit=1)
+            if not existing:
+                self.env['meli.payment.method'].create({
+                    'instance_id': self.id,
+                    'payment_method_id': mid,
+                    'payment_type_id': mtype,
+                    'description': mname,
+                })
+                created += 1
+
+        msg = (
+            f"Se importaron {created} métodos de pago nuevos de MercadoLibre ({self.site_id}). "
+            f"Total disponibles: {len(methods)}. "
+            f"Asigná un diario contable a cada uno en la pestaña 'Métodos de Pago'."
+        )
+        self.message_post(body=msg)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Métodos de pago importados',
+                'message': msg,
+                'type': 'success',
+                'sticky': False,
+            },
+        }
+
+    def _resolve_payment_journal(self, payments):
+        """
+        Resolve the Odoo journal from the ML order payments list.
+        payments: list of dicts with payment_method_id and payment_type_id.
+        Uses the first approved payment entry.
+        Lookup: specific method_id → type fallback → first bank/cash journal.
+        """
+        for p in payments:
+            if p.get('status') not in ('approved', 'in_process', None):
+                continue
+            method_id = (p.get('payment_method_id') or '').lower().strip()
+            type_id = (p.get('payment_type_id') or '').lower().strip()
+
+            if method_id:
+                mapping = self.env['meli.payment.method'].search([
+                    ('instance_id', '=', self.id),
+                    ('payment_method_id', '=ilike', method_id),
+                ], limit=1)
+                if mapping:
+                    _logger.info("ML payment: method=%s → journal=%s", method_id, mapping.journal_id.name)
+                    return mapping.journal_id
+
+            if type_id:
+                mapping = self.env['meli.payment.method'].search([
+                    ('instance_id', '=', self.id),
+                    ('payment_method_id', 'in', (False, '')),
+                    ('payment_type_id', '=ilike', type_id),
+                ], limit=1)
+                if mapping:
+                    _logger.info("ML payment: type=%s → journal=%s", type_id, mapping.journal_id.name)
+                    return mapping.journal_id
+
+        journal = self.env['account.journal'].search(
+            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.env.company.id)],
+            limit=1,
+        )
+        if journal:
+            _logger.warning(
+                "ML: no payment mapping for this order on instance %s — fallback to '%s'",
+                self.name, journal.name,
+            )
+        return journal
+
+    def _register_payment_on_order(self, so, order):
+        """Create invoice and register payment for a confirmed ML sale order."""
+        try:
+            so._create_invoices()
+            invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
+            if not invoice:
+                _logger.warning("ML: no draft invoice after _create_invoices for SO %s", so.name)
+                return
+            invoice.action_post()
+
+            payments = order.get('payments') or []
+            total = sum(float(p.get('total_paid_amount') or 0) for p in payments if p.get('status') == 'approved')
+            if total <= 0:
+                total = float(order.get('total_amount') or 0)
+            if total <= 0:
+                _logger.warning("ML: payment total is 0 for SO %s — skipping", so.name)
+                return
+
+            journal = self._resolve_payment_journal(payments)
+            if not journal:
+                return
+
+            self.env['account.payment.register'].with_context(
+                active_model='account.move',
+                active_ids=invoice.ids,
+            ).create({
+                'amount': total,
+                'journal_id': journal.id,
+                'payment_date': fields.Date.today(),
+                'communication': f"ML {so.meli_order_id}",
+            }).action_create_payments()
+            _logger.info(
+                "ML payment registered for SO %s (order %s) via journal '%s'",
+                so.name, so.meli_order_id, journal.name,
+            )
+        except Exception as e:
+            _logger.error("ML: could not register payment for SO %s: %s", so.name, str(e))
+
+    def _get_or_create_partner(self, buyer):
+        """Find or create a res.partner from ML buyer data, enriching existing records."""
+        meli_user_id = str(buyer.get('id', ''))
+        nickname = buyer.get('nickname') or 'MercadoLibre Guest'
+        email = buyer.get('email', '')
+        phone = buyer.get('phone', {}).get('number', '') if isinstance(buyer.get('phone'), dict) else ''
+
+        # Shipping address from buyer (available in some ML order payloads)
+        shipping = buyer.get('shipping_address') or {}
+        street = shipping.get('address_line', '')
+        city = shipping.get('city', {}).get('name', '') if isinstance(shipping.get('city'), dict) else ''
+        zip_code = shipping.get('zip_code', '')
+
+        partner = (
+            self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
+            if meli_user_id else self.env['res.partner']
+        )
+        if not partner and email:
+            partner = self.env['res.partner'].search([('email', '=', email)], limit=1)
+
+        vals = {'meli_user_id': meli_user_id, 'meli_nickname': nickname}
+        if email and not partner.email if partner else email:
+            vals['email'] = email
+        if phone and not partner.phone if partner else phone:
+            vals['phone'] = phone
+        if street and not partner.street if partner else street:
+            vals['street'] = street
+        if city and not partner.city if partner else city:
+            vals['city'] = city
+        if zip_code and not partner.zip if partner else zip_code:
+            vals['zip'] = zip_code
+
+        if partner:
+            partner.write(vals)
+        else:
+            vals['name'] = nickname
+            partner = self.env['res.partner'].create(vals)
+
+        return partner
+
+    def _is_full_order(self, order):
+        """
+        Detect if the ML order was fulfilled by MercadoLibre (FULL/fulfillment).
+        ML marks these orders with the 'fulfillment' tag in order.tags.
+        Also checks shipping.logistic_type as a fallback.
+        """
+        tags = order.get('tags') or []
+        if 'fulfillment' in tags:
+            return True
+        logistic_type = (order.get('shipping') or {}).get('logistic_type', '')
+        return logistic_type == 'fulfillment'
+
+    def _register_payment_on_order(self, so, order):
+        """
+        Create invoice and register payment for a self-fulfilled paid ML order.
+        The payment amount comes from the ML order total.
+        """
+        try:
+            so._create_invoices()
+            invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
+            if not invoice:
+                _logger.warning("SO %s: no draft invoice found after _create_invoices", so.name)
+                return
+            invoice.action_post()
+
+            payment_total = order.get('total_amount') or sum(
+                l.get('unit_price', 0) * l.get('quantity', 1)
+                for l in order.get('order_items', [])
+            )
+            if payment_total <= 0:
+                _logger.warning("SO %s: payment_total is 0 — skipping payment registration", so.name)
+                return
+
+            journal = self.env['account.journal'].search(
+                [('type', 'in', ('bank', 'cash')), ('company_id', '=', so.company_id.id)],
+                limit=1,
+            )
+            if not journal:
+                _logger.warning("SO %s: no bank/cash journal found — skipping payment registration", so.name)
+                return
+
+            payment_register = self.env['account.payment.register'].with_context(
+                active_model='account.move',
+                active_ids=invoice.ids,
+            ).create({
+                'amount': payment_total,
+                'journal_id': journal.id,
+                'payment_date': fields.Date.today(),
+                'communication': f"ML {so.meli_order_id}",
+            })
+            payment_register.action_create_payments()
+            _logger.info("Payment registered for SO %s (ML order %s)", so.name, so.meli_order_id)
+
+        except Exception as e:
+            _logger.error(
+                "Could not register payment for SO %s: %s — manual payment required",
+                so.name, str(e),
+            )
+
     def _process_single_order(self, order):
-        """Create a sale.order from an ML order dict if it doesn't already exist."""
+        """
+        Create a confirmed sale.order from an ML order dict.
+
+        FULL orders (fulfilled by MercadoLibre):
+          - Use the configured warehouse_full_id
+          - Auto-validate delivery (stock already at ML warehouse)
+          - Register payment
+
+        Self-fulfilled orders (seller ships):
+          - Use default warehouse
+          - Reserve stock only (delivery pending physical dispatch)
+          - Register payment so accounting is up to date
+        """
         order_id = str(order.get('id'))
         if self.env['sale.order'].search([('meli_order_id', '=', order_id)], limit=1):
             return
 
-        buyer = order.get('buyer') or {}
-        nickname = buyer.get('nickname') or 'MercadoLibre Guest'
-        meli_user_id = str(buyer.get('id', ''))
+        ml_status = order.get('status', '')
+        if ml_status not in ('paid', 'payment_required'):
+            _logger.info("ML order %s skipped — status=%s", order_id, ml_status)
+            return
 
-        partner = self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
-        if not partner:
-            partner = self.env['res.partner'].search([('name', '=', nickname)], limit=1)
-        if not partner:
-            partner = self.env['res.partner'].create({
-                'name': nickname,
-                'meli_user_id': meli_user_id,
-                'meli_nickname': nickname,
-            })
-        elif not partner.meli_user_id:
-            partner.write({'meli_user_id': meli_user_id, 'meli_nickname': nickname})
+        is_full = self._is_full_order(order)
+        buyer = order.get('buyer') or {}
+        partner = self._get_or_create_partner(buyer)
 
         order_lines = []
         for item in order.get('order_items', []):
             meli_item_id = item.get('item', {}).get('id')
             qty = item.get('quantity', 1)
             price = item.get('unit_price', 0)
-            m_item = self.env['meli.item'].search([('meli_id', '=', meli_item_id)], limit=1)
+            m_item = self.env['meli.item'].search([
+                ('meli_id', '=', meli_item_id),
+                ('instance_id', '=', self.id),
+            ], limit=1)
             if m_item and m_item.product_id:
                 order_lines.append((0, 0, {
                     'product_id': m_item.product_id.product_variant_id.id,
                     'product_uom_qty': qty,
                     'price_unit': price,
                 }))
+            else:
+                _logger.warning(
+                    "ML order %s: item %s not found in instance %s — line skipped",
+                    order_id, meli_item_id, self.name,
+                )
 
-        if order_lines:
-            so = self.env['sale.order'].create({
-                'partner_id': partner.id,
-                'meli_order_id': order_id,
-                'meli_instance_id': self.id,
-                'state': 'draft',
-                'order_line': order_lines,
-            })
-            so.action_confirm()
-            _logger.info("Created sale order %s for ML order %s", so.name, order_id)
+        if not order_lines:
+            _logger.warning("ML order %s has no matching products — order not created", order_id)
+            return
+
+        so_vals = {
+            'partner_id': partner.id,
+            'meli_order_id': order_id,
+            'meli_instance_id': self.id,
+            'order_line': order_lines,
+        }
+        if is_full and self.warehouse_full_id:
+            so_vals['warehouse_id'] = self.warehouse_full_id.id
+
+        # Capture payment method info for traceability
+        payments = order.get('payments') or []
+        first_payment = next((p for p in payments if p.get('status') == 'approved'), payments[0] if payments else {})
+        so_vals['meli_payment_method'] = (first_payment.get('payment_method_id') or '').lower()
+        so_vals['meli_payment_type'] = (first_payment.get('payment_type_id') or '').lower()
+
+        so = self.env['sale.order'].create(so_vals)
+        so.action_confirm()
+
+        fulfillment_label = 'FULL (ML Fulfillment)' if is_full else 'Envío propio'
+        _logger.info(
+            "Created SO %s for ML order %s [%s] (instance: %s)",
+            so.name, order_id, fulfillment_label, self.name,
+        )
+
+        if is_full:
+            # Stock is physically at ML — auto-validate delivery to reflect reality
+            if not self.warehouse_full_id:
+                _logger.warning(
+                    "ML order %s is FULL but no warehouse_full_id configured on instance %s. "
+                    "Delivery will NOT be auto-validated.",
+                    order_id, self.name,
+                )
+            else:
+                try:
+                    for picking in so.picking_ids.filtered(lambda p: p.state not in ('done', 'cancel')):
+                        for move in picking.move_ids:
+                            move.quantity = move.product_uom_qty
+                        picking.with_context(skip_immediate=True).button_validate()
+                    _logger.info("Auto-validated FULL delivery for SO %s", so.name)
+                except Exception as e:
+                    _logger.error(
+                        "Could not auto-validate FULL delivery for SO %s: %s",
+                        so.name, str(e),
+                    )
+
+        if ml_status == 'paid':
+            self._register_payment_on_order(so, order)
 
     def action_sync_orders(self):
         for rec in self:

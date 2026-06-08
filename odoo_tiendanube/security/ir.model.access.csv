@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_tn_instance_user,tn.instance user,model_tn_instance,base.group_system,1,1,1,1
+access_tn_product_user,tn.product user,model_tn_product,base.group_user,1,1,1,1
+access_tn_variant_user,tn.variant user,model_tn_variant,base.group_user,1,1,1,1
+access_tn_payment_method_user,tn.payment.method user,model_tn_payment_method,base.group_system,1,1,1,1

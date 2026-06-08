@@ -11,7 +11,9 @@
                     <button name="action_refresh_token" string="Refresh Token" type="object" invisible="state == 'draft'"/>
                     <button name="action_sync_root_categories" string="Sync Categories" type="object" invisible="state != 'authenticated'"/>
                     <button name="action_sync_items" string="Sync Items" type="object" invisible="state != 'authenticated'"/>
-                    <button name="action_sync_orders" string="Sync Orders" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_sync_orders" string="Sync Orders (fallback)" type="object" invisible="state != 'authenticated'"/>
+                    <button name="action_fetch_payment_methods" string="Importar Métodos de Pago" type="object" invisible="state != 'authenticated'"
+                            help="Consulta los métodos de pago disponibles en ML para este site y los agrega a la tabla de mapeos."/>
                     <button name="action_reset_connection" string="Reset Connection" type="object" invisible="state == 'draft'" confirm="This will clear current tokens. Are you sure?"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,authenticated"/>
                 </header>
@@ -33,6 +35,8 @@
                         <group string="Configuration">
                             <field name="pricelist_id"/>
                             <field name="stock_location_ids" widget="many2many_tags"/>
+                            <field name="warehouse_full_id"
+                                   help="Opcional. Almacén que representa el stock en centros ML FULL. Si se configura, los pedidos FULL se despachan desde aquí y se validan automáticamente."/>
                         </group>
                         <group string="Authentication Status">
                             <field name="authorization_code" invisible="state == 'authenticated'"/>
@@ -40,7 +44,28 @@
                             <field name="refresh_token" password="True"/>
                             <field name="token_expiration"/>
                         </group>
+                        <group string="Notificaciones (Webhooks)" colspan="2">
+                            <field name="webhook_url" readonly="1"
+                                   help="Copiá esta URL en MercadoLibre Developers → Tu App → Notificaciones → URL de notificaciones. Activá el tópico 'orders_v2'."/>
+                        </group>
                     </group>
+                    <notebook>
+                        <page string="Métodos de Pago" name="payment_methods">
+                            <p class="text-muted">
+                                Usá el botón <strong>"Importar Métodos de Pago"</strong> para cargar automáticamente los métodos disponibles en MercadoLibre para este site.
+                                Luego asigná el diario contable correspondiente a cada uno.
+                                Si no hay mapeo, se usará el primer diario banco/caja disponible.
+                            </p>
+                            <field name="payment_method_ids">
+                                <list editable="bottom">
+                                    <field name="payment_method_id" placeholder="ej: visa"/>
+                                    <field name="payment_type_id" placeholder="ej: credit_card"/>
+                                    <field name="description" placeholder="ej: Tarjeta Visa"/>
+                                    <field name="journal_id"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
                 </sheet>
             </form>
         </field>

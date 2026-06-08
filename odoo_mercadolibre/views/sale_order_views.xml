@@ -13,6 +13,8 @@
                     <group>
                         <field name="meli_order_id"/>
                         <field name="meli_instance_id"/>
+                        <field name="meli_payment_method"/>
+                        <field name="meli_payment_type"/>
                     </group>
                 </page>
             </xpath>

@@ -9,6 +9,8 @@ class SaleOrder(models.Model):
 
     meli_order_id = fields.Char('MercadoLibre Order ID', readonly=True, index=True)
     meli_instance_id = fields.Many2one('meli.instance', 'ML Account', readonly=True)
+    meli_payment_method = fields.Char('Método de Pago (ML)', readonly=True)
+    meli_payment_type = fields.Char('Tipo de Pago (ML)', readonly=True)
 
     def action_sync_messages(self):
         """Fetch post-sale messages from MercadoLibre and post them to chatter."""
