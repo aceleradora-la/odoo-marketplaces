@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_instance_form" model="ir.ui.view">
+        <field name="name">tn.instance.form</field>
+        <field name="model">tn.instance</field>
+        <field name="arch" type="xml">
+            <form string="TiendaNube Store">
+                <header>
+                    <button name="action_get_authorization_url" string="1. Obtener URL de Auth" type="object"
+                            class="oe_highlight" invisible="state == 'authenticated'"/>
+                    <button name="action_get_token" string="2. Obtener Token" type="object"
+                            class="oe_highlight" invisible="state == 'authenticated'"/>
+                    <button name="action_register_webhooks" string="Registrar Webhooks" type="object"
+                            invisible="state != 'authenticated'"/>
+                    <button name="action_unregister_webhooks" string="Eliminar Webhooks" type="object"
+                            invisible="state != 'authenticated'"
+                            confirm="¿Seguro? Esto dejará de recibir notificaciones en tiempo real."/>
+                    <button name="action_sync_orders" string="Sincronizar Pedidos" type="object"
+                            invisible="state != 'authenticated'"/>
+                    <button name="action_reset_connection" string="Resetear Conexión" type="object"
+                            invisible="state == 'draft'"
+                            confirm="Esto eliminará el token actual. ¿Continuar?"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,authenticated"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="Ej: Mi Tienda TiendaNube"/></h1>
+                    </div>
+                    <group>
+                        <group string="Credenciales de la App">
+                            <field name="app_id"/>
+                            <field name="app_secret" password="True"/>
+                            <field name="contact_email"/>
+                            <field name="tn_store_id" readonly="1"/>
+                        </group>
+                        <group string="Configuración Odoo">
+                            <field name="pricelist_id"/>
+                            <field name="stock_location_ids" widget="many2many_tags"/>
+                        </group>
+                        <group string="Autenticación">
+                            <field name="authorization_code" invisible="state == 'authenticated'"
+                                   placeholder="Pegá aquí el código devuelto por TiendaNube"/>
+                            <field name="access_token" password="True" readonly="1"/>
+                        </group>
+                        <group string="Notificaciones (Webhooks)" colspan="2">
+                            <field name="webhook_url" readonly="1"
+                                   help="Esta URL se registra automáticamente al presionar 'Registrar Webhooks'. También podés configurarla manualmente en el panel de partners de TiendaNube."/>
+                            <field name="webhook_ids_json" readonly="1" invisible="not webhook_ids_json"
+                                   string="IDs registrados"/>
+                        </group>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_tn_instance_list" model="ir.ui.view">
+        <field name="name">tn.instance.list</field>
+        <field name="model">tn.instance</field>
+        <field name="arch" type="xml">
+            <list string="TiendaNube Stores">
+                <field name="name"/>
+                <field name="tn_store_id"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'authenticated'"
+                       decoration-info="state == 'draft'"
+                       decoration-danger="state == 'error'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_tn_instance" model="ir.actions.act_window">
+        <field name="name">TiendaNube Stores</field>
+        <field name="res_model">tn.instance</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_tn_instances"
+              name="Cuentas"
+              parent="tn_menu_config"
+              action="action_tn_instance"
+              sequence="10"/>
+</odoo>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_sale_order_form" model="ir.ui.view">
+        <field name="name">tn.sale.order.form</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='other_info']" position="inside">
+                <group string="TiendaNube" invisible="not tn_order_id">
+                    <field name="tn_order_id" readonly="1"/>
+                    <field name="tn_instance_id" readonly="1"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
