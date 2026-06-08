@@ -149,6 +149,57 @@ class TnInstance(models.Model):
     # Webhook registration
     # -------------------------------------------------------------------------
 
+    def action_fetch_payment_providers(self):
+        """
+        Fetch installed payment providers (gateways) from TiendaNube and create
+        tn.payment.method records so the user can map them to Odoo journals.
+        The `code` field of each provider is the `gateway` value in orders.
+        """
+        self.ensure_one()
+        if self.state != 'authenticated':
+            raise UserError(_("La instancia debe estar autenticada."))
+
+        resp = self._call_api('GET', '/payment_providers')
+        if resp.status_code != 200:
+            raise UserError(_("Error al consultar gateways de pago: %s") % resp.text)
+
+        providers = resp.json()
+        created = 0
+        for p in providers:
+            code = (p.get('code') or p.get('id') or '').lower().strip()
+            name = p.get('name') or code
+            if not code:
+                continue
+            existing = self.env['tn.payment.method'].search([
+                ('instance_id', '=', self.id),
+                ('gateway_name', '=', code),
+                ('payment_method_name', 'in', (False, '')),
+            ], limit=1)
+            if not existing:
+                self.env['tn.payment.method'].create({
+                    'instance_id': self.id,
+                    'gateway_name': code,
+                    'description': name,
+                })
+                created += 1
+
+        msg = (
+            f"Se importaron {created} gateways de pago nuevos de TiendaNube. "
+            f"Total activos en la tienda: {len(providers)}. "
+            f"Asigná un diario contable a cada uno en la pestaña 'Métodos de Pago'."
+        )
+        self.message_post(body=msg)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Gateways importados',
+                'message': msg,
+                'type': 'success',
+                'sticky': False,
+            },
+        }
+
     def action_register_webhooks(self):
         """Register the required webhooks in TiendaNube for this store."""
         self.ensure_one()

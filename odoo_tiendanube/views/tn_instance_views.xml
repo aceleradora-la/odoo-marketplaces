@@ -10,6 +10,9 @@
                             class="oe_highlight" invisible="state == 'authenticated'"/>
                     <button name="action_get_token" string="2. Obtener Token" type="object"
                             class="oe_highlight" invisible="state == 'authenticated'"/>
+                    <button name="action_fetch_payment_providers" string="Importar Gateways de Pago" type="object"
+                            invisible="state != 'authenticated'"
+                            help="Consulta los gateways instalados en la tienda y los agrega a la tabla de mapeos."/>
                     <button name="action_register_webhooks" string="Registrar Webhooks" type="object"
                             invisible="state != 'authenticated'"/>
                     <button name="action_unregister_webhooks" string="Eliminar Webhooks" type="object"

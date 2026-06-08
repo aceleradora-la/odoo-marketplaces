@@ -54,6 +54,9 @@ class MeliInstance(models.Model):
 
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (ML Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    payment_method_ids = fields.One2many(
+        'meli.payment.method', 'instance_id', string='Mapeos de Métodos de Pago'
+    )
     warehouse_full_id = fields.Many2one(
         'stock.warehouse',
         string='Almacén ML FULL',
@@ -298,6 +301,135 @@ class MeliInstance(models.Model):
             _logger.error("Exception fetching seller info for %s: %s", self.name, str(e))
         return None
 
+    def action_fetch_payment_methods(self):
+        """
+        Fetch all payment methods for this site from ML (public endpoint, no token needed)
+        and create/update meli.payment.method records so the user can map them to journals.
+        """
+        self.ensure_one()
+        url = f"https://api.mercadolibre.com/sites/{self.site_id}/payment_methods"
+        # This endpoint is public but we use _call_api for consistency
+        resp = self._call_api('GET', url)
+        if resp.status_code != 200:
+            raise UserError(_("Error al consultar métodos de pago de ML: %s") % resp.text)
+
+        methods = resp.json()
+        created = 0
+        for m in methods:
+            mid = m.get('id', '')
+            mtype = m.get('payment_type_id', '')
+            mname = m.get('name', mid)
+            existing = self.env['meli.payment.method'].search([
+                ('instance_id', '=', self.id),
+                ('payment_method_id', '=', mid),
+            ], limit=1)
+            if not existing:
+                self.env['meli.payment.method'].create({
+                    'instance_id': self.id,
+                    'payment_method_id': mid,
+                    'payment_type_id': mtype,
+                    'description': mname,
+                })
+                created += 1
+
+        msg = (
+            f"Se importaron {created} métodos de pago nuevos de MercadoLibre ({self.site_id}). "
+            f"Total disponibles: {len(methods)}. "
+            f"Asigná un diario contable a cada uno en la pestaña 'Métodos de Pago'."
+        )
+        self.message_post(body=msg)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': 'Métodos de pago importados',
+                'message': msg,
+                'type': 'success',
+                'sticky': False,
+            },
+        }
+
+    def _resolve_payment_journal(self, payments):
+        """
+        Resolve the Odoo journal from the ML order payments list.
+        payments: list of dicts with payment_method_id and payment_type_id.
+        Uses the first approved payment entry.
+        Lookup: specific method_id → type fallback → first bank/cash journal.
+        """
+        for p in payments:
+            if p.get('status') not in ('approved', 'in_process', None):
+                continue
+            method_id = (p.get('payment_method_id') or '').lower().strip()
+            type_id = (p.get('payment_type_id') or '').lower().strip()
+
+            if method_id:
+                mapping = self.env['meli.payment.method'].search([
+                    ('instance_id', '=', self.id),
+                    ('payment_method_id', '=ilike', method_id),
+                ], limit=1)
+                if mapping:
+                    _logger.info("ML payment: method=%s → journal=%s", method_id, mapping.journal_id.name)
+                    return mapping.journal_id
+
+            if type_id:
+                mapping = self.env['meli.payment.method'].search([
+                    ('instance_id', '=', self.id),
+                    ('payment_method_id', 'in', (False, '')),
+                    ('payment_type_id', '=ilike', type_id),
+                ], limit=1)
+                if mapping:
+                    _logger.info("ML payment: type=%s → journal=%s", type_id, mapping.journal_id.name)
+                    return mapping.journal_id
+
+        journal = self.env['account.journal'].search(
+            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.env.company.id)],
+            limit=1,
+        )
+        if journal:
+            _logger.warning(
+                "ML: no payment mapping for this order on instance %s — fallback to '%s'",
+                self.name, journal.name,
+            )
+        return journal
+
+    def _register_payment_on_order(self, so, order):
+        """Create invoice and register payment for a confirmed ML sale order."""
+        try:
+            so._create_invoices()
+            invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
+            if not invoice:
+                _logger.warning("ML: no draft invoice after _create_invoices for SO %s", so.name)
+                return
+            invoice.action_post()
+
+            payments = order.get('payments') or []
+            total = sum(float(p.get('total_paid_amount') or 0) for p in payments if p.get('status') == 'approved')
+            if total <= 0:
+                total = float(order.get('total_amount') or 0)
+            if total <= 0:
+                _logger.warning("ML: payment total is 0 for SO %s — skipping", so.name)
+                return
+
+            journal = self._resolve_payment_journal(payments)
+            if not journal:
+                return
+
+            self.env['account.payment.register'].with_context(
+                active_model='account.move',
+                active_ids=invoice.ids,
+            ).create({
+                'amount': total,
+                'journal_id': journal.id,
+                'payment_date': fields.Date.today(),
+                'communication': f"ML {so.meli_order_id}",
+            }).action_create_payments()
+            _logger.info(
+                "ML payment registered for SO %s (order %s) via journal '%s'",
+                so.name, so.meli_order_id, journal.name,
+            )
+        except Exception as e:
+            _logger.error("ML: could not register payment for SO %s: %s", so.name, str(e))
+
     def _get_or_create_partner(self, buyer):
         """Find or create a res.partner from ML buyer data, enriching existing records."""
         meli_user_id = str(buyer.get('id', ''))
@@ -458,6 +590,12 @@ class MeliInstance(models.Model):
         if is_full and self.warehouse_full_id:
             so_vals['warehouse_id'] = self.warehouse_full_id.id
 
+        # Capture payment method info for traceability
+        payments = order.get('payments') or []
+        first_payment = next((p for p in payments if p.get('status') == 'approved'), payments[0] if payments else {})
+        so_vals['meli_payment_method'] = (first_payment.get('payment_method_id') or '').lower()
+        so_vals['meli_payment_type'] = (first_payment.get('payment_type_id') or '').lower()
+
         so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
 
@@ -488,7 +626,6 @@ class MeliInstance(models.Model):
                         so.name, str(e),
                     )
 
-        # Register payment for paid orders regardless of fulfillment type
         if ml_status == 'paid':
             self._register_payment_on_order(so, order)
 
