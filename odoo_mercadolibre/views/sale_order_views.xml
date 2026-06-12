@@ -23,6 +23,10 @@
                             <field name="meli_shipment_status"/>
                             <field name="meli_tracking_number"/>
                         </group>
+                        <group string="Costos del Marketplace">
+                            <field name="meli_sale_fee"/>
+                            <field name="meli_shipping_cost"/>
+                        </group>
                     </group>
                     <div invisible="not meli_shipment_id">
                         <button name="action_meli_shipment_status" string="Actualizar Estado de Envío"

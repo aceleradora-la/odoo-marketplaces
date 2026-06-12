@@ -24,6 +24,11 @@ class SaleOrder(models.Model):
     meli_payment_method = fields.Char('Método de Pago (ML)', readonly=True)
     meli_payment_type = fields.Char('Tipo de Pago (ML)', readonly=True)
 
+    meli_sale_fee = fields.Float('Comisión ML', readonly=True,
+                                 help='Comisión cobrada por MercadoLibre por esta venta')
+    meli_shipping_cost = fields.Float('Costo de Envío (vendedor)', readonly=True,
+                                      help='Parte del costo de envío a cargo del vendedor')
+
     meli_shipment_id = fields.Char('ML Shipment ID', readonly=True, index=True)
     meli_shipment_status = fields.Char('Estado del Envío (ML)', readonly=True)
     meli_tracking_number = fields.Char('Tracking (ML)', readonly=True)
