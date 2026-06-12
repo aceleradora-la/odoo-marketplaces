@@ -1,6 +1,7 @@
 # odoo-marketplaces
 
-Integraciones de Odoo con marketplaces de Latinoamérica.
+Integraciones de Odoo con marketplaces de Latinoamérica, desarrolladas por
+[**aceleradora.la**](https://aceleradora.la).
 Compatible con **Odoo 18 y 19**, Community y Enterprise (no usa módulos Enterprise).
 
 | Rama | Versión Odoo |
@@ -89,6 +90,12 @@ para revisión.
 Cada cuenta (instancia) tiene su compañía asignada; los pedidos, facturas y pagos se
 crean en esa compañía con el diario correspondiente.
 
-## Licencia
+## Documentación por módulo
 
-AGPL-3 — aceleradora.la
+- [marketplace_base](marketplace_base/README.md) — log de sincronización común
+- [odoo_mercadolibre](odoo_mercadolibre/README.md) — integración MercadoLibre
+- [odoo_tiendanube](odoo_tiendanube/README.md) — integración TiendaNube
+
+## Licencia y créditos
+
+AGPL-3 — Desarrollado por [**aceleradora.la**](https://aceleradora.la)

@@ -90,7 +90,8 @@
         </field>
     </record>
 
-    <menuitem id="menu_marketplace_root" name="Marketplaces" sequence="56"/>
+    <menuitem id="menu_marketplace_root" name="Marketplaces" sequence="56"
+              web_icon="marketplace_base,static/description/icon.png"/>
     <menuitem id="menu_marketplace_sync_log"
               name="Log de Sincronización"
               parent="menu_marketplace_root"
