@@ -16,6 +16,7 @@
         'views/sale_order_views.xml',
         'views/res_partner_views.xml',
         'views/stock_picking_views.xml',
+        'views/tn_category_views.xml',
     ],
     'installable': True,
     'application': True,

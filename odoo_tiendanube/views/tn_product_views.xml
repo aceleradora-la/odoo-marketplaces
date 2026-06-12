@@ -27,6 +27,7 @@
                             <field name="product_id"/>
                             <field name="tn_product_id" readonly="1"/>
                             <field name="tn_url" widget="url" readonly="1"/>
+                            <field name="category_ids" widget="many2many_tags"/>
                         </group>
                         <group string="Variantes">
                             <field name="variant_count" string="Cantidad de variantes"/>

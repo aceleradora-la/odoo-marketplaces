@@ -30,6 +30,10 @@ class TnProduct(models.Model):
 
     variant_ids = fields.One2many('tn.variant', 'tn_product_id', string='Variants')
     variant_count = fields.Integer(compute='_compute_variant_count')
+    category_ids = fields.Many2many(
+        'tn.category', string='Categorías TN',
+        domain="[('instance_id', '=', instance_id)]",
+    )
 
     @api.depends('variant_ids')
     def _compute_variant_count(self):
@@ -78,13 +82,18 @@ class TnProduct(models.Model):
         if not variants:
             variants = [{'price': str(price), 'stock': stock, 'sku': tmpl.default_code or ''}]
 
-        return {
+        payload = {
             'name': {'es': self.name},
             'description': {'es': tmpl.description_sale or ''},
             'published': True,
             'variants': variants,
             'images': images,
         }
+        if self.category_ids:
+            payload['categories'] = [
+                int(c.tn_category_id) for c in self.category_ids if c.tn_category_id.isdigit()
+            ]
+        return payload
 
     def _get_stock(self):
         tmpl = self.product_id

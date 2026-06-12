@@ -522,6 +522,60 @@ class TnInstance(models.Model):
             )
 
     # -------------------------------------------------------------------------
+    # Categories
+    # -------------------------------------------------------------------------
+
+    def action_sync_categories(self):
+        """Fetch the store's category tree from TiendaNube."""
+        self.ensure_one()
+        if self.state != 'authenticated':
+            raise UserError(_("La instancia debe estar autenticada."))
+
+        Category = self.env['tn.category']
+        fetched = []          # (tn_id, name, parent_tn_id)
+        page = 1
+        while True:
+            resp = self._call_api('GET', '/categories', params={'per_page': 50, 'page': page})
+            if resp.status_code != 200:
+                raise UserError(_("Error consultando categorías: %s") % resp.text)
+            cats = resp.json()
+            if not cats:
+                break
+            for c in cats:
+                name = c.get('name') or {}
+                name_str = name.get('es') or next(iter(name.values()), '') if isinstance(name, dict) else str(name)
+                fetched.append((str(c.get('id')), name_str, str(c.get('parent') or '') or None))
+            if len(cats) < 50:
+                break
+            page += 1
+
+        # First pass: create/update all categories without parent
+        by_tn_id = {}
+        created = 0
+        for tn_id, name_str, _parent in fetched:
+            cat = Category.search([
+                ('instance_id', '=', self.id), ('tn_category_id', '=', tn_id),
+            ], limit=1)
+            if cat:
+                cat.write({'name': name_str})
+            else:
+                cat = Category.create({
+                    'instance_id': self.id, 'tn_category_id': tn_id, 'name': name_str,
+                })
+                created += 1
+            by_tn_id[tn_id] = cat
+
+        # Second pass: link parents
+        for tn_id, _name, parent_tn_id in fetched:
+            if parent_tn_id and parent_tn_id in by_tn_id:
+                by_tn_id[tn_id].parent_id = by_tn_id[parent_tn_id]
+
+        self.message_post(
+            body=f"Categorías sincronizadas: {len(fetched)} en total, {created} nuevas."
+        )
+        return True
+
+    # -------------------------------------------------------------------------
     # Fulfillment notification
     # -------------------------------------------------------------------------
 
