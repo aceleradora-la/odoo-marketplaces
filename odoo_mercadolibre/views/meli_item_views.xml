@@ -44,6 +44,20 @@
                             <field name="user_product_id" invisible="not is_full_flex"/>
                         </group>
                     </group>
+                    <notebook invisible="not has_variants">
+                        <page string="Variaciones">
+                            <field name="has_variants" invisible="1"/>
+                            <field name="variation_ids" readonly="1">
+                                <list>
+                                    <field name="variation_id"/>
+                                    <field name="sku"/>
+                                    <field name="product_id"/>
+                                    <field name="price"/>
+                                    <field name="available_quantity"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
                 </sheet>
                 <chatter>
                     <field name="message_follower_ids"/>

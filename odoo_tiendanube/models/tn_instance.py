@@ -47,6 +47,11 @@ class TnInstance(models.Model):
     # Odoo configuration
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (TN Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    notify_fulfillment = fields.Boolean(
+        'Notificar envíos a TN', default=True,
+        help='Al validar la entrega en Odoo, informar el tracking a TiendaNube '
+             'para que el cliente reciba la notificación de envío.',
+    )
 
     # Webhooks
     webhook_url = fields.Char('Webhook URL', compute='_compute_webhook_url')
@@ -57,6 +62,15 @@ class TnInstance(models.Model):
     payment_method_ids = fields.One2many(
         'tn.payment.method', 'instance_id', string='Mapeos de Métodos de Pago'
     )
+
+    def _mkt_log(self, operation, state, reference='', message='', payload=None,
+                 res_model='', res_id=0):
+        """Shortcut to the shared marketplace sync log."""
+        return self.env['marketplace.sync.log'].log_event(
+            'tiendanube', operation, state,
+            instance_name=self.name, reference=reference, message=message,
+            payload=payload, res_model=res_model, res_id=res_id,
+        )
 
     @api.depends('tn_store_id')
     def _compute_webhook_url(self):
@@ -373,6 +387,11 @@ class TnInstance(models.Model):
 
         if not order_lines:
             _logger.warning("TN order %s has no matching products — order not created", tn_order_id)
+            self._mkt_log(
+                'order_webhook', 'error', reference=tn_order_id,
+                message='Ningún producto del pedido pudo matchearse con productos TN de Odoo.',
+                payload=order_data,
+            )
             return
 
         gateway = (order_data.get('gateway') or '').lower().strip()
@@ -393,6 +412,11 @@ class TnInstance(models.Model):
         so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
         _logger.info("Created SO %s for TN order %s (store: %s)", so.name, tn_order_id, self.name)
+        self._mkt_log(
+            'order_webhook', 'success', reference=tn_order_id,
+            message=f"SO {so.name} creado",
+            res_model='sale.order', res_id=so.id,
+        )
 
         # Register payment
         self._register_payment_on_order(so, order_data)
@@ -491,6 +515,309 @@ class TnInstance(models.Model):
             )
         except Exception as e:
             _logger.error("TN: could not register payment for SO %s: %s", so.name, str(e))
+            self._mkt_log(
+                'payment', 'error', reference=so.tn_order_id,
+                message=f"No se pudo registrar el pago de {so.name}: {e}",
+                res_model='sale.order', res_id=so.id,
+            )
+
+    # -------------------------------------------------------------------------
+    # Catalog import
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _tn_name(value):
+        """TN returns localized dicts like {'es': '...'}; extract a plain string."""
+        if isinstance(value, dict):
+            return value.get('es') or next(iter(value.values()), '')
+        return str(value or '')
+
+    def _import_create_template(self, tn_data):
+        """
+        Create an Odoo product.template from a TN product payload, including
+        attributes/variants when the TN product has more than one variant.
+        Returns the created template.
+        """
+        name = self._tn_name(tn_data.get('name'))
+        variants = tn_data.get('products') or tn_data.get('variants') or []
+        attr_names = [self._tn_name(a) for a in (tn_data.get('attributes') or [])]
+
+        tmpl_vals = {
+            'name': name or f"TN {tn_data.get('id')}",
+            'type': 'consu',
+            'is_storable': True,
+            'description_sale': self._tn_name(tn_data.get('description')),
+        }
+
+        if len(variants) > 1 and attr_names:
+            # Build attribute lines: for each attribute position, collect the
+            # distinct values across variants
+            attribute_lines = []
+            for idx, attr_name in enumerate(attr_names):
+                attribute = self.env['product.attribute'].search(
+                    [('name', '=ilike', attr_name)], limit=1,
+                ) or self.env['product.attribute'].create({'name': attr_name})
+
+                value_names = []
+                for v in variants:
+                    values = v.get('values') or []
+                    if idx < len(values):
+                        vname = self._tn_name(values[idx])
+                        if vname and vname not in value_names:
+                            value_names.append(vname)
+
+                value_ids = []
+                for vname in value_names:
+                    val = self.env['product.attribute.value'].search([
+                        ('attribute_id', '=', attribute.id), ('name', '=ilike', vname),
+                    ], limit=1) or self.env['product.attribute.value'].create({
+                        'attribute_id': attribute.id, 'name': vname,
+                    })
+                    value_ids.append(val.id)
+
+                if value_ids:
+                    attribute_lines.append((0, 0, {
+                        'attribute_id': attribute.id,
+                        'value_ids': [(6, 0, value_ids)],
+                    }))
+            if attribute_lines:
+                tmpl_vals['attribute_line_ids'] = attribute_lines
+
+        template = self.env['product.template'].create(tmpl_vals)
+
+        # Assign SKU per generated variant by matching attribute value names
+        if len(variants) > 1:
+            for odoo_variant in template.product_variant_ids:
+                odoo_value_names = set(
+                    odoo_variant.product_template_attribute_value_ids
+                    .mapped('product_attribute_value_id.name')
+                )
+                for v in variants:
+                    tn_value_names = {self._tn_name(x) for x in (v.get('values') or [])}
+                    if tn_value_names and tn_value_names == odoo_value_names:
+                        if v.get('sku'):
+                            odoo_variant.default_code = v['sku']
+                        break
+        elif variants:
+            v = variants[0]
+            if v.get('sku'):
+                template.default_code = v['sku']
+            if v.get('price'):
+                template.list_price = float(v['price'])
+
+        return template
+
+    def action_import_products(self):
+        """Import the store's existing products from TiendaNube into Odoo."""
+        self.ensure_one()
+        if self.state != 'authenticated':
+            raise UserError(_("La instancia debe estar autenticada."))
+
+        TnProduct = self.env['tn.product']
+        created = matched = updated = errors = 0
+        page = 1
+
+        while True:
+            resp = self._call_api('GET', '/products', params={'per_page': 50, 'page': page})
+            if resp.status_code != 200:
+                raise UserError(_("Error consultando productos de TN: %s") % resp.text)
+            products = resp.json()
+            if not products:
+                break
+
+            for tn_data in products:
+                tn_id = str(tn_data.get('id'))
+                try:
+                    tn_product = TnProduct.search([
+                        ('tn_product_id', '=', tn_id),
+                        ('instance_id', '=', self.id),
+                    ], limit=1)
+                    variants = tn_data.get('variants') or []
+
+                    if tn_product:
+                        tn_product._sync_variants_from_response(variants)
+                        updated += 1
+                        continue
+
+                    # Match Odoo template by first variant SKU, then by name
+                    name = self._tn_name(tn_data.get('name'))
+                    template = False
+                    first_sku = variants[0].get('sku') if variants else ''
+                    if first_sku:
+                        odoo_variant = self.env['product.product'].search(
+                            [('default_code', '=', first_sku)], limit=1)
+                        template = odoo_variant.product_tmpl_id if odoo_variant else False
+                    if not template and name:
+                        template = self.env['product.template'].search(
+                            [('name', '=ilike', name)], limit=1)
+                    if template:
+                        matched += 1
+                    else:
+                        template = self._import_create_template(tn_data)
+                        created += 1
+
+                    # Map TN categories already synced for this store
+                    category_ids = []
+                    for cat_id in (tn_data.get('categories') or []):
+                        cid = cat_id.get('id') if isinstance(cat_id, dict) else cat_id
+                        cat = self.env['tn.category'].search([
+                            ('instance_id', '=', self.id),
+                            ('tn_category_id', '=', str(cid)),
+                        ], limit=1)
+                        if cat:
+                            category_ids.append(cat.id)
+
+                    tn_product = TnProduct.create({
+                        'name': name or template.name,
+                        'instance_id': self.id,
+                        'product_id': template.id,
+                        'tn_product_id': tn_id,
+                        'tn_url': tn_data.get('canonical_url', ''),
+                        'status': 'active',
+                        'category_ids': [(6, 0, category_ids)],
+                    })
+                    tn_product._sync_variants_from_response(variants)
+
+                except Exception as e:
+                    errors += 1
+                    _logger.error("TN import: error on product %s: %s", tn_id, e)
+                    self._mkt_log(
+                        'import', 'error', reference=tn_id,
+                        message=f"Error importando producto: {e}", payload=tn_data,
+                    )
+
+            if len(products) < 50:
+                break
+            page += 1
+
+        msg = (
+            f"Importación de catálogo TN finalizada: {created} productos creados, "
+            f"{matched} vinculados a productos existentes, {updated} actualizados, "
+            f"{errors} errores."
+        )
+        self.message_post(body=msg)
+        self._mkt_log('import', 'success' if not errors else 'error', message=msg)
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Importación de catálogo'),
+                'message': msg,
+                'type': 'success' if not errors else 'warning',
+                'sticky': bool(errors),
+            },
+        }
+
+    # -------------------------------------------------------------------------
+    # Categories
+    # -------------------------------------------------------------------------
+
+    def action_sync_categories(self):
+        """Fetch the store's category tree from TiendaNube."""
+        self.ensure_one()
+        if self.state != 'authenticated':
+            raise UserError(_("La instancia debe estar autenticada."))
+
+        Category = self.env['tn.category']
+        fetched = []          # (tn_id, name, parent_tn_id)
+        page = 1
+        while True:
+            resp = self._call_api('GET', '/categories', params={'per_page': 50, 'page': page})
+            if resp.status_code != 200:
+                raise UserError(_("Error consultando categorías: %s") % resp.text)
+            cats = resp.json()
+            if not cats:
+                break
+            for c in cats:
+                name = c.get('name') or {}
+                name_str = name.get('es') or next(iter(name.values()), '') if isinstance(name, dict) else str(name)
+                fetched.append((str(c.get('id')), name_str, str(c.get('parent') or '') or None))
+            if len(cats) < 50:
+                break
+            page += 1
+
+        # First pass: create/update all categories without parent
+        by_tn_id = {}
+        created = 0
+        for tn_id, name_str, _parent in fetched:
+            cat = Category.search([
+                ('instance_id', '=', self.id), ('tn_category_id', '=', tn_id),
+            ], limit=1)
+            if cat:
+                cat.write({'name': name_str})
+            else:
+                cat = Category.create({
+                    'instance_id': self.id, 'tn_category_id': tn_id, 'name': name_str,
+                })
+                created += 1
+            by_tn_id[tn_id] = cat
+
+        # Second pass: link parents
+        for tn_id, _name, parent_tn_id in fetched:
+            if parent_tn_id and parent_tn_id in by_tn_id:
+                by_tn_id[tn_id].parent_id = by_tn_id[parent_tn_id]
+
+        self.message_post(
+            body=f"Categorías sincronizadas: {len(fetched)} en total, {created} nuevas."
+        )
+        return True
+
+    # -------------------------------------------------------------------------
+    # Fulfillment notification
+    # -------------------------------------------------------------------------
+
+    def _notify_fulfillment(self, picking):
+        """
+        Notify TiendaNube that the order was shipped, with tracking info.
+        Tries the fulfillments endpoint first; on 404/405 (stores on the older
+        API) falls back to pack + fulfill.
+        """
+        self.ensure_one()
+        so = picking.sale_id
+        if not so or not so.tn_order_id:
+            return False
+
+        tracking = picking.carrier_tracking_ref or ''
+        body = {
+            'shipping_tracking_number': tracking,
+            'notify_customer': True,
+        }
+        try:
+            resp = self._call_api('POST', f'/orders/{so.tn_order_id}/fulfillments', json=body)
+            if resp.status_code in (404, 405):
+                # Older API: pack then fulfill
+                self._call_api('POST', f'/orders/{so.tn_order_id}/pack')
+                resp = self._call_api('POST', f'/orders/{so.tn_order_id}/fulfill', json=body)
+
+            if resp.status_code in (200, 201):
+                picking.message_post(
+                    body=_("Envío notificado a TiendaNube")
+                         + (f" — Tracking: {tracking}" if tracking else "")
+                )
+                self._mkt_log(
+                    'fulfillment', 'success', reference=so.tn_order_id,
+                    message=f"Tracking informado: {tracking or '(sin tracking)'}",
+                    res_model='stock.picking', res_id=picking.id,
+                )
+                return True
+
+            _logger.error(
+                "TN fulfillment error for order %s (%s): %s",
+                so.tn_order_id, resp.status_code, resp.text,
+            )
+            self._mkt_log(
+                'fulfillment', 'error', reference=so.tn_order_id,
+                message=f"Error notificando envío ({resp.status_code}): {resp.text[:500]}",
+                res_model='stock.picking', res_id=picking.id,
+            )
+        except Exception as e:
+            _logger.error("TN fulfillment exception for order %s: %s", so.tn_order_id, e)
+            self._mkt_log(
+                'fulfillment', 'error', reference=so.tn_order_id,
+                message=f"Excepción notificando envío: {e}",
+                res_model='stock.picking', res_id=picking.id,
+            )
+        return False
 
     # -------------------------------------------------------------------------
     # Cron: sync orders (fallback polling — webhook is primary)

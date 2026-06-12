@@ -1,12 +1,12 @@
 {
     'name': 'TiendaNube Integration',
-    'version': '19.0.1.1.0',
+    'version': '19.0.2.0.0',
     'category': 'Sales',
     'summary': 'Integración entre Odoo y TiendaNube: productos, variantes, precios y pedidos',
     'author': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
-    'depends': ['base', 'sale_management', 'stock', 'account', 'mail'],
+    'depends': ['base', 'sale_management', 'stock', 'account', 'mail', 'marketplace_base'],
     'data': [
         'security/ir.model.access.csv',
         'data/ir_cron.xml',
@@ -15,6 +15,8 @@
         'views/tn_product_views.xml',
         'views/sale_order_views.xml',
         'views/res_partner_views.xml',
+        'views/stock_picking_views.xml',
+        'views/tn_category_views.xml',
     ],
     'installable': True,
     'application': True,

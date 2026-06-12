@@ -67,6 +67,27 @@ class MeliInstance(models.Model):
         help='Almacén de Odoo que representa el stock en los centros de fulfillment de MercadoLibre. '
              'Los pedidos FULL se despachan desde aquí y se validan automáticamente.',
     )
+
+    # Fee billing configuration
+    create_fee_bill = fields.Boolean(
+        'Crear factura de comisiones',
+        help='Al procesar cada pedido, crear una factura de proveedor en borrador con la '
+             'comisión de ML y el costo de envío del vendedor.',
+    )
+    fee_product_id = fields.Many2one(
+        'product.product', string='Producto Comisión ML',
+        domain="[('type', '=', 'service')]",
+        help='Producto de servicio usado en la línea de comisión de la factura de proveedor.',
+    )
+    shipping_cost_product_id = fields.Many2one(
+        'product.product', string='Producto Costo de Envío',
+        domain="[('type', '=', 'service')]",
+        help='Producto de servicio usado en la línea de costo de envío.',
+    )
+    fee_partner_id = fields.Many2one(
+        'res.partner', string='Proveedor ML',
+        help='Partner proveedor de las facturas de comisiones (ej: MercadoLibre SRL).',
+    )
     seller_id = fields.Char('Seller ID', readonly=True)
 
     state = fields.Selection([
@@ -80,6 +101,15 @@ class MeliInstance(models.Model):
         compute='_compute_webhook_url',
         help='Configure esta URL en el Panel de Desarrolladores de MercadoLibre → Notificaciones',
     )
+
+    def _mkt_log(self, operation, state, reference='', message='', payload=None,
+                 res_model='', res_id=0):
+        """Shortcut to the shared marketplace sync log."""
+        return self.env['marketplace.sync.log'].log_event(
+            'meli', operation, state,
+            instance_name=self.name, reference=reference, message=message,
+            payload=payload, res_model=res_model, res_id=res_id,
+        )
 
     @api.depends('site_id')
     def _compute_webhook_url(self):
@@ -456,6 +486,11 @@ class MeliInstance(models.Model):
             )
         except Exception as e:
             _logger.error("ML: could not register payment for SO %s: %s", so.name, str(e))
+            self._mkt_log(
+                'payment', 'error', reference=so.meli_order_id,
+                message=f"No se pudo registrar el pago de {so.name}: {e}",
+                res_model='sale.order', res_id=so.id,
+            )
 
     def _get_or_create_partner(self, buyer):
         """Find or create a res.partner from ML buyer data, enriching existing records."""
@@ -492,6 +527,66 @@ class MeliInstance(models.Model):
             partner = self.env['res.partner'].create(vals)
 
         return partner
+
+    def _fetch_seller_shipping_cost(self, shipment_id):
+        """
+        Return the shipping cost paid by the seller for a shipment.
+        ML: shipping_option.list_cost is the full cost, shipping_option.cost is
+        what the buyer pays; the seller covers the difference (free shipping etc.).
+        """
+        if not shipment_id:
+            return 0.0
+        try:
+            resp = self._call_api('GET', f"https://api.mercadolibre.com/shipments/{shipment_id}")
+            if resp.status_code != 200:
+                return 0.0
+            option = resp.json().get('shipping_option') or {}
+            list_cost = float(option.get('list_cost') or 0)
+            buyer_cost = float(option.get('cost') or 0)
+            return max(0.0, list_cost - buyer_cost)
+        except Exception as e:
+            _logger.warning("ML: could not fetch shipping cost for shipment %s: %s", shipment_id, e)
+            return 0.0
+
+    def _create_fee_bill(self, so):
+        """Create a draft vendor bill with ML fee and seller shipping cost lines."""
+        if not self.create_fee_bill or not self.fee_partner_id:
+            return
+        lines = []
+        if so.meli_sale_fee > 0 and self.fee_product_id:
+            lines.append((0, 0, {
+                'product_id': self.fee_product_id.id,
+                'name': f"Comisión ML pedido {so.meli_order_id}",
+                'quantity': 1,
+                'price_unit': so.meli_sale_fee,
+            }))
+        if so.meli_shipping_cost > 0 and self.shipping_cost_product_id:
+            lines.append((0, 0, {
+                'product_id': self.shipping_cost_product_id.id,
+                'name': f"Costo de envío ML pedido {so.meli_order_id}",
+                'quantity': 1,
+                'price_unit': so.meli_shipping_cost,
+            }))
+        if not lines:
+            return
+        try:
+            bill = self.env['account.move'].create({
+                'move_type': 'in_invoice',
+                'partner_id': self.fee_partner_id.id,
+                'company_id': so.company_id.id,
+                'ref': f"ML {so.meli_order_id}",
+                'invoice_date': fields.Date.today(),
+                'invoice_line_ids': lines,
+            })
+            so.message_post(body=_("Factura de comisiones ML creada en borrador: %s") % bill.display_name)
+            _logger.info("ML fee bill %s created for SO %s", bill.id, so.name)
+        except Exception as e:
+            _logger.error("ML: could not create fee bill for SO %s: %s", so.name, e)
+            self._mkt_log(
+                'payment', 'error', reference=so.meli_order_id,
+                message=f"No se pudo crear la factura de comisiones de {so.name}: {e}",
+                res_model='sale.order', res_id=so.id,
+            )
 
     def _is_full_order(self, order):
         """
@@ -535,15 +630,31 @@ class MeliInstance(models.Model):
         order_lines = []
         for item in order.get('order_items', []):
             meli_item_id = item.get('item', {}).get('id')
+            variation_id = str(item.get('item', {}).get('variation_id') or '')
             qty = item.get('quantity', 1)
             price = item.get('unit_price', 0)
-            m_item = self.env['meli.item'].search([
-                ('meli_id', '=', meli_item_id),
-                ('instance_id', '=', self.id),
-            ], limit=1)
-            if m_item and m_item.product_id:
+
+            # Variant-level match first (items published with variations)
+            odoo_product = False
+            if variation_id:
+                variation = self.env['meli.item.variation'].search([
+                    ('variation_id', '=', variation_id),
+                    ('item_id.instance_id', '=', self.id),
+                ], limit=1)
+                if variation and variation.product_id:
+                    odoo_product = variation.product_id
+
+            if not odoo_product:
+                m_item = self.env['meli.item'].search([
+                    ('meli_id', '=', meli_item_id),
+                    ('instance_id', '=', self.id),
+                ], limit=1)
+                if m_item and m_item.product_id:
+                    odoo_product = m_item.product_id.product_variant_id
+
+            if odoo_product:
                 order_lines.append((0, 0, {
-                    'product_id': m_item.product_id.product_variant_id.id,
+                    'product_id': odoo_product.id,
                     'product_uom_qty': qty,
                     'price_unit': price,
                 }))
@@ -555,6 +666,11 @@ class MeliInstance(models.Model):
 
         if not order_lines:
             _logger.warning("ML order %s has no matching products — order not created", order_id)
+            self._mkt_log(
+                'order_webhook', 'error', reference=order_id,
+                message='Ningún producto del pedido pudo matchearse con publicaciones de Odoo.',
+                payload=order,
+            )
             return
 
         so_vals = {
@@ -575,6 +691,20 @@ class MeliInstance(models.Model):
         so_vals['meli_payment_method'] = (first_payment.get('payment_method_id') or '').lower()
         so_vals['meli_payment_type'] = (first_payment.get('payment_type_id') or '').lower()
 
+        # Capture shipment reference for tracking/labels
+        shipping = order.get('shipping') or {}
+        if shipping.get('id'):
+            so_vals['meli_shipment_id'] = str(shipping['id'])
+        if shipping.get('logistic_type'):
+            so_vals['meli_logistic_type'] = shipping['logistic_type']
+
+        # Marketplace costs: ML fee from order items, shipping cost from shipment
+        so_vals['meli_sale_fee'] = sum(
+            float(i.get('sale_fee') or 0) * (i.get('quantity') or 1)
+            for i in order.get('order_items', [])
+        )
+        so_vals['meli_shipping_cost'] = self._fetch_seller_shipping_cost(shipping.get('id'))
+
         so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
 
@@ -582,6 +712,11 @@ class MeliInstance(models.Model):
         _logger.info(
             "Created SO %s for ML order %s [%s] (instance: %s)",
             so.name, order_id, fulfillment_label, self.name,
+        )
+        self._mkt_log(
+            'order_webhook', 'success', reference=order_id,
+            message=f"SO {so.name} creado [{fulfillment_label}]",
+            res_model='sale.order', res_id=so.id,
         )
 
         if is_full:
@@ -607,6 +742,8 @@ class MeliInstance(models.Model):
 
         if ml_status == 'paid':
             self._register_payment_on_order(so, order)
+
+        self._create_fee_bill(so)
 
     def action_sync_orders(self, days_back=30):
         """Fallback polling: fetch paid orders created in the last `days_back` days."""

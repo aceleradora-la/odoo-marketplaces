@@ -216,6 +216,116 @@ class TestMeliOrders(TransactionCase):
         with self.assertRaises(UserError):
             item._validate_before_publish()
 
+    # ------------------------------------------------------------------
+    # Shipment + fees capture
+    # ------------------------------------------------------------------
+
+    def test_process_order_captures_shipment_and_fees(self):
+        order = self._order_payload(
+            id=777,
+            shipping={'id': 40001, 'logistic_type': 'me2'},
+            order_items=[{
+                'item': {'id': 'MLA111'}, 'quantity': 2,
+                'unit_price': 100.0, 'sale_fee': 13.5,
+            }],
+        )
+        with patch.object(type(self.instance), '_register_payment_on_order'), \
+             patch.object(type(self.instance), '_fetch_seller_shipping_cost', return_value=850.0):
+            self.instance._process_single_order(order)
+        so = self.env['sale.order'].search([('meli_order_id', '=', '777')])
+        self.assertEqual(so.meli_shipment_id, '40001')
+        self.assertEqual(so.meli_logistic_type, 'me2')
+        self.assertEqual(so.meli_sale_fee, 27.0)  # 13.5 x 2
+        self.assertEqual(so.meli_shipping_cost, 850.0)
+
+    # ------------------------------------------------------------------
+    # Variants
+    # ------------------------------------------------------------------
+
+    def _make_variant_product(self):
+        attribute = self.env['product.attribute'].create({
+            'name': 'Color Test', 'meli_attribute_code': 'COLOR',
+        })
+        red = self.env['product.attribute.value'].create({
+            'attribute_id': attribute.id, 'name': 'Rojo'})
+        blue = self.env['product.attribute.value'].create({
+            'attribute_id': attribute.id, 'name': 'Azul'})
+        template = self.env['product.template'].create({
+            'name': 'Remera Test', 'type': 'consu', 'is_storable': True,
+            'attribute_line_ids': [(0, 0, {
+                'attribute_id': attribute.id,
+                'value_ids': [(6, 0, [red.id, blue.id])],
+            })],
+        })
+        for i, variant in enumerate(template.product_variant_ids):
+            variant.default_code = f"REM-{i}"
+        return template
+
+    def test_prepare_variations_json(self):
+        template = self._make_variant_product()
+        item = self.env['meli.item'].create({
+            'name': 'Remera con Variantes',
+            'product_id': template.id,
+            'instance_id': self.instance.id,
+            'price': 100.0,
+            'available_quantity': 1,
+        })
+        self.assertTrue(item.has_variants)
+        variations = item._prepare_variations_json()
+        self.assertEqual(len(variations), 2)
+        combo = variations[0]['attribute_combinations'][0]
+        self.assertEqual(combo['id'], 'COLOR')
+        self.assertIn(combo['value_name'], ('Rojo', 'Azul'))
+        skus = {v['attributes'][0]['value_name'] for v in variations}
+        self.assertEqual(skus, {'REM-0', 'REM-1'})
+
+    def test_validate_variants_require_ml_code_and_sku(self):
+        template = self._make_variant_product()
+        template.attribute_line_ids.attribute_id.meli_attribute_code = False
+        category = self.env['meli.category'].create({
+            'name': 'Cat Var', 'meli_id': 'MLA999', 'is_leaf': True,
+        })
+        template.meli_category_id = category
+        item = self.env['meli.item'].create({
+            'name': 'Sin Código ML',
+            'product_id': template.id,
+            'instance_id': self.instance.id,
+            'price': 100.0,
+            'available_quantity': 1,
+        })
+        with self.assertRaises(UserError):
+            item._validate_before_publish()
+
+    def test_process_order_matches_by_variation(self):
+        template = self._make_variant_product()
+        item = self.env['meli.item'].create({
+            'name': 'Remera Var',
+            'product_id': template.id,
+            'instance_id': self.instance.id,
+            'price': 100.0,
+            'available_quantity': 5,
+            'meli_id': 'MLA222',
+            'status': 'active',
+        })
+        target_variant = template.product_variant_ids[1]
+        self.env['meli.item.variation'].create({
+            'item_id': item.id,
+            'product_id': target_variant.id,
+            'variation_id': '987654',
+            'sku': target_variant.default_code,
+        })
+        order = self._order_payload(
+            id=888,
+            order_items=[{
+                'item': {'id': 'MLA222', 'variation_id': 987654},
+                'quantity': 1, 'unit_price': 120.0,
+            }],
+        )
+        with patch.object(type(self.instance), '_register_payment_on_order'):
+            self.instance._process_single_order(order)
+        so = self.env['sale.order'].search([('meli_order_id', '=', '888')])
+        self.assertEqual(so.order_line.product_id, target_variant)
+
     def test_validate_before_publish_zero_price(self):
         category = self.env['meli.category'].create({
             'name': 'Cat Test', 'meli_id': 'MLA1234', 'is_leaf': True,

@@ -13,6 +13,11 @@
                     <button name="action_fetch_payment_providers" string="Importar Gateways de Pago" type="object"
                             invisible="state != 'authenticated'"
                             help="Consulta los gateways instalados en la tienda y los agrega a la tabla de mapeos."/>
+                    <button name="action_sync_categories" string="Sincronizar Categorías" type="object"
+                            invisible="state != 'authenticated'"/>
+                    <button name="action_import_products" string="Importar Catálogo" type="object"
+                            invisible="state != 'authenticated'"
+                            confirm="Se importarán todos los productos de la tienda TN hacia Odoo. ¿Continuar?"/>
                     <button name="action_register_webhooks" string="Registrar Webhooks" type="object"
                             invisible="state != 'authenticated'"/>
                     <button name="action_unregister_webhooks" string="Eliminar Webhooks" type="object"
@@ -40,6 +45,7 @@
                             <field name="company_id" groups="base.group_multi_company"/>
                             <field name="pricelist_id"/>
                             <field name="stock_location_ids" widget="many2many_tags"/>
+                            <field name="notify_fulfillment"/>
                         </group>
                         <group string="Autenticación">
                             <field name="authorization_code" invisible="state == 'authenticated'"

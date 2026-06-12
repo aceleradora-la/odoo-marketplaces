@@ -39,6 +39,12 @@
                             <field name="warehouse_full_id"
                                    help="Opcional. Almacén que representa el stock en centros ML FULL. Si se configura, los pedidos FULL se despachan desde aquí y se validan automáticamente."/>
                         </group>
+                        <group string="Comisiones y Costos">
+                            <field name="create_fee_bill"/>
+                            <field name="fee_partner_id" invisible="not create_fee_bill" required="create_fee_bill"/>
+                            <field name="fee_product_id" invisible="not create_fee_bill"/>
+                            <field name="shipping_cost_product_id" invisible="not create_fee_bill"/>
+                        </group>
                         <group string="Authentication Status">
                             <field name="authorization_code" invisible="state == 'authenticated'"/>
                             <field name="access_token" password="True"/>
@@ -47,7 +53,7 @@
                         </group>
                         <group string="Notificaciones (Webhooks)" colspan="2">
                             <field name="webhook_url" readonly="1"
-                                   help="Copiá esta URL en MercadoLibre Developers → Tu App → Notificaciones → URL de notificaciones. Activá el tópico 'orders_v2'."/>
+                                   help="Copiá esta URL en MercadoLibre Developers → Tu App → Notificaciones → URL de notificaciones. Activá los tópicos 'orders_v2' y 'shipments'."/>
                         </group>
                     </group>
                     <notebook>

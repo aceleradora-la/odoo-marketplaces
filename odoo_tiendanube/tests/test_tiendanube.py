@@ -159,6 +159,78 @@ class TestTiendaNubeOrders(TransactionCase):
         )
         self.assertFalse(self.env['sale.order'].search([('tn_order_id', '=', '70002')]))
 
+    # ------------------------------------------------------------------
+    # Catalog import
+    # ------------------------------------------------------------------
+
+    def test_import_create_template_with_variants(self):
+        tn_data = {
+            'id': 9100,
+            'name': {'es': 'Zapatilla Importada'},
+            'description': {'es': 'Desc'},
+            'attributes': [{'es': 'Talle'}],
+            'variants': [
+                {'sku': 'ZAP-38', 'price': '100.00', 'values': [{'es': '38'}]},
+                {'sku': 'ZAP-40', 'price': '100.00', 'values': [{'es': '40'}]},
+            ],
+        }
+        template = self.instance._import_create_template(tn_data)
+        self.assertEqual(template.name, 'Zapatilla Importada')
+        self.assertEqual(template.product_variant_count, 2)
+        skus = set(template.product_variant_ids.mapped('default_code'))
+        self.assertEqual(skus, {'ZAP-38', 'ZAP-40'})
+
+    def test_import_create_template_simple(self):
+        tn_data = {
+            'id': 9200,
+            'name': {'es': 'Producto Simple'},
+            'variants': [{'sku': 'SIMPLE-1', 'price': '75.50', 'values': []}],
+        }
+        template = self.instance._import_create_template(tn_data)
+        self.assertEqual(template.product_variant_count, 1)
+        self.assertEqual(template.default_code, 'SIMPLE-1')
+        self.assertEqual(template.list_price, 75.50)
+
+    # ------------------------------------------------------------------
+    # Categories
+    # ------------------------------------------------------------------
+
+    def test_publish_payload_includes_categories(self):
+        cat = self.env['tn.category'].create({
+            'name': 'Calzado', 'tn_category_id': '123', 'instance_id': self.instance.id,
+        })
+        self.tn_product.category_ids = [(6, 0, [cat.id])]
+        payload = self.tn_product._build_product_payload()
+        self.assertEqual(payload['categories'], [123])
+
+    # ------------------------------------------------------------------
+    # Fulfillment
+    # ------------------------------------------------------------------
+
+    def test_notify_fulfillment_success(self):
+        with patch.object(type(self.instance), '_register_payment_on_order'):
+            self.instance._process_single_order(self._order_payload())
+        so = self.env['sale.order'].search([('tn_order_id', '=', '70001')])
+        picking = so.picking_ids[:1]
+        self.assertTrue(picking)
+        picking.carrier_tracking_ref = 'TRACK-123'
+
+        class FakeResp:
+            status_code = 201
+            text = '{}'
+
+        with patch.object(type(self.instance), '_call_api', return_value=FakeResp()) as mocked:
+            result = self.instance._notify_fulfillment(picking)
+        self.assertTrue(result)
+        called_url = mocked.call_args[0][1]
+        self.assertIn('/orders/70001/fulfillments', called_url)
+        log = self.env['marketplace.sync.log'].search([
+            ('channel', '=', 'tiendanube'), ('operation', '=', 'fulfillment'),
+            ('reference', '=', '70001'),
+        ])
+        self.assertTrue(log)
+        self.assertEqual(log[0].state, 'success')
+
     def test_process_order_no_matching_product(self):
         self.instance._process_single_order(self._order_payload(
             id=70003,

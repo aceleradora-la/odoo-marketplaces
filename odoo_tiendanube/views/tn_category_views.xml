@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_tn_category_list" model="ir.ui.view">
+        <field name="name">tn.category.list</field>
+        <field name="model">tn.category</field>
+        <field name="arch" type="xml">
+            <list string="Categorías TiendaNube">
+                <field name="display_name" string="Categoría"/>
+                <field name="tn_category_id"/>
+                <field name="parent_id"/>
+                <field name="instance_id"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_tn_category" model="ir.actions.act_window">
+        <field name="name">Categorías TiendaNube</field>
+        <field name="res_model">tn.category</field>
+        <field name="view_mode">list</field>
+    </record>
+
+    <menuitem id="menu_tn_categories"
+              name="Categorías"
+              parent="tn_menu_config"
+              action="action_tn_category"
+              sequence="20"/>
+</odoo>

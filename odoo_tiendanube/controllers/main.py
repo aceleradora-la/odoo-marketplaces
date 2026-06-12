@@ -57,6 +57,11 @@ class TiendaNubeController(http.Controller):
             )
             if not instance:
                 _logger.warning("TN Webhook: no authenticated instance for store_id=%s", store_id)
+                request.env['marketplace.sync.log'].sudo().log_event(
+                    'tiendanube', 'order_webhook', 'error', reference=resource_id,
+                    message=f"Webhook recibido pero no hay tienda autenticada con store_id={store_id}",
+                    payload=payload,
+                )
                 return request.make_response('{}', [('Content-Type', 'application/json')])
 
             if event in ('orders/paid', 'orders/created'):
@@ -65,6 +70,11 @@ class TiendaNubeController(http.Controller):
                     instance.sudo()._process_single_order(resp.json())
                 else:
                     _logger.error("TN Webhook: error fetching order %s — %s", resource_id, resp.text)
+                    instance.sudo()._mkt_log(
+                        'order_webhook', 'error', reference=resource_id,
+                        message=f"Error consultando el pedido en TN ({resp.status_code}): {resp.text[:500]}",
+                        payload=payload,
+                    )
 
             elif event == 'orders/cancelled':
                 self._handle_order_cancelled(instance, resource_id)
@@ -77,6 +87,10 @@ class TiendaNubeController(http.Controller):
 
         except Exception as e:
             _logger.error("TN Webhook exception (event=%s id=%s): %s", event, resource_id, str(e))
+            request.env['marketplace.sync.log'].sudo().log_event(
+                'tiendanube', 'order_webhook', 'error', reference=resource_id,
+                message=f"Excepción procesando webhook {event}: {e}", payload=payload,
+            )
 
         return request.make_response('{}', [('Content-Type', 'application/json')])
 
