@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <menuitem id="tn_menu_root" name="TiendaNube" sequence="55"/>
+    <menuitem id="tn_menu_root" name="TiendaNube" sequence="55"
+              web_icon="odoo_tiendanube,static/description/icon.png"/>
     <menuitem id="tn_menu_config" name="Configuración" parent="tn_menu_root" sequence="90"/>
     <menuitem id="tn_menu_products_root" name="Productos" parent="tn_menu_root" sequence="10"/>
 </odoo>

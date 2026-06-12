@@ -4,10 +4,19 @@
     'category': 'Sales',
     'summary': 'Integración completa entre Odoo y MercadoLibre (V18/19)',
     'description': """
-        Módulo base para la integración con MercadoLibre.
-        Soporta múltiples cuentas (App ID), autenticación OAuth 2.0.
+Integración completa con MercadoLibre (8 países de LatAm), desarrollada por aceleradora.la.
+
+* OAuth 2.0 multi-cuenta con refresh automático de tokens
+* Publicaciones con categorías, atributos, imágenes y variantes (variations)
+* Pedidos en tiempo real por webhook, diferenciando FULL vs envío propio
+* Facturación y pago automáticos con mapeo método de pago → diario contable
+* Envíos: estado, tracking y descarga de etiqueta PDF
+* Comisiones y costos de envío del vendedor, con factura de proveedor opcional
+* Stock por publicación/variación, incluida convivencia FULL + Flex (user-products)
+* Subida de facturas a ML y mensajería post-venta
     """,
     'author': 'aceleradora.la',
+    'maintainer': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
     'depends': ['base', 'sale_management', 'stock', 'account', 'mail', 'marketplace_base'],
