@@ -51,6 +51,11 @@ class MeliController(http.Controller):
                 )
                 if not instance:
                     _logger.warning("ML Webhook: no authenticated instance for user_id=%s", user_id)
+                    request.env['marketplace.sync.log'].sudo().log_event(
+                        'meli', 'order_webhook', 'error', reference=resource,
+                        message=f"Webhook recibido pero no hay cuenta autenticada con seller_id={user_id}",
+                        payload=payload,
+                    )
                 else:
                     # resource = "/orders/12345678" or "/orders/v2/12345678"
                     order_id = resource.rstrip('/').split('/')[-1]
@@ -60,8 +65,17 @@ class MeliController(http.Controller):
                         instance.sudo()._process_single_order(resp.json())
                     else:
                         _logger.error("ML Webhook: error fetching order %s — %s", order_id, resp.text)
+                        instance.sudo()._mkt_log(
+                            'order_webhook', 'error', reference=order_id,
+                            message=f"Error consultando el pedido en ML ({resp.status_code}): {resp.text[:500]}",
+                            payload=payload,
+                        )
             except Exception as e:
                 _logger.error("ML Webhook: exception processing order notification — %s", str(e))
+                request.env['marketplace.sync.log'].sudo().log_event(
+                    'meli', 'order_webhook', 'error', reference=resource,
+                    message=f"Excepción procesando webhook: {e}", payload=payload,
+                )
 
         return request.make_response('{}', [('Content-Type', 'application/json')])
 

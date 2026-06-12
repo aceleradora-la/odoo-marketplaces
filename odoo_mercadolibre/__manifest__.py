@@ -10,7 +10,7 @@
     'author': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
-    'depends': ['base', 'sale_management', 'stock', 'account', 'mail'],
+    'depends': ['base', 'sale_management', 'stock', 'account', 'mail', 'marketplace_base'],
     'data': [
         'security/ir.model.access.csv',
         'data/ir_cron.xml',

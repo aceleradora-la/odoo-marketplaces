@@ -58,6 +58,15 @@ class TnInstance(models.Model):
         'tn.payment.method', 'instance_id', string='Mapeos de Métodos de Pago'
     )
 
+    def _mkt_log(self, operation, state, reference='', message='', payload=None,
+                 res_model='', res_id=0):
+        """Shortcut to the shared marketplace sync log."""
+        return self.env['marketplace.sync.log'].log_event(
+            'tiendanube', operation, state,
+            instance_name=self.name, reference=reference, message=message,
+            payload=payload, res_model=res_model, res_id=res_id,
+        )
+
     @api.depends('tn_store_id')
     def _compute_webhook_url(self):
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
@@ -373,6 +382,11 @@ class TnInstance(models.Model):
 
         if not order_lines:
             _logger.warning("TN order %s has no matching products — order not created", tn_order_id)
+            self._mkt_log(
+                'order_webhook', 'error', reference=tn_order_id,
+                message='Ningún producto del pedido pudo matchearse con productos TN de Odoo.',
+                payload=order_data,
+            )
             return
 
         gateway = (order_data.get('gateway') or '').lower().strip()
@@ -393,6 +407,11 @@ class TnInstance(models.Model):
         so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
         _logger.info("Created SO %s for TN order %s (store: %s)", so.name, tn_order_id, self.name)
+        self._mkt_log(
+            'order_webhook', 'success', reference=tn_order_id,
+            message=f"SO {so.name} creado",
+            res_model='sale.order', res_id=so.id,
+        )
 
         # Register payment
         self._register_payment_on_order(so, order_data)
@@ -491,6 +510,11 @@ class TnInstance(models.Model):
             )
         except Exception as e:
             _logger.error("TN: could not register payment for SO %s: %s", so.name, str(e))
+            self._mkt_log(
+                'payment', 'error', reference=so.tn_order_id,
+                message=f"No se pudo registrar el pago de {so.name}: {e}",
+                res_model='sale.order', res_id=so.id,
+            )
 
     # -------------------------------------------------------------------------
     # Cron: sync orders (fallback polling — webhook is primary)

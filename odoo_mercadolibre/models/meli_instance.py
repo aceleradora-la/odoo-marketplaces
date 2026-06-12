@@ -81,6 +81,15 @@ class MeliInstance(models.Model):
         help='Configure esta URL en el Panel de Desarrolladores de MercadoLibre → Notificaciones',
     )
 
+    def _mkt_log(self, operation, state, reference='', message='', payload=None,
+                 res_model='', res_id=0):
+        """Shortcut to the shared marketplace sync log."""
+        return self.env['marketplace.sync.log'].log_event(
+            'meli', operation, state,
+            instance_name=self.name, reference=reference, message=message,
+            payload=payload, res_model=res_model, res_id=res_id,
+        )
+
     @api.depends('site_id')
     def _compute_webhook_url(self):
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
@@ -456,6 +465,11 @@ class MeliInstance(models.Model):
             )
         except Exception as e:
             _logger.error("ML: could not register payment for SO %s: %s", so.name, str(e))
+            self._mkt_log(
+                'payment', 'error', reference=so.meli_order_id,
+                message=f"No se pudo registrar el pago de {so.name}: {e}",
+                res_model='sale.order', res_id=so.id,
+            )
 
     def _get_or_create_partner(self, buyer):
         """Find or create a res.partner from ML buyer data, enriching existing records."""
@@ -555,6 +569,11 @@ class MeliInstance(models.Model):
 
         if not order_lines:
             _logger.warning("ML order %s has no matching products — order not created", order_id)
+            self._mkt_log(
+                'order_webhook', 'error', reference=order_id,
+                message='Ningún producto del pedido pudo matchearse con publicaciones de Odoo.',
+                payload=order,
+            )
             return
 
         so_vals = {
@@ -582,6 +601,11 @@ class MeliInstance(models.Model):
         _logger.info(
             "Created SO %s for ML order %s [%s] (instance: %s)",
             so.name, order_id, fulfillment_label, self.name,
+        )
+        self._mkt_log(
+            'order_webhook', 'success', reference=order_id,
+            message=f"SO {so.name} creado [{fulfillment_label}]",
+            res_model='sale.order', res_id=so.id,
         )
 
         if is_full:
