@@ -47,6 +47,11 @@ class TnInstance(models.Model):
     # Odoo configuration
     pricelist_id = fields.Many2one('product.pricelist', string='Pricelist (TN Prices)')
     stock_location_ids = fields.Many2many('stock.location', string='Stock Locations')
+    notify_fulfillment = fields.Boolean(
+        'Notificar envíos a TN', default=True,
+        help='Al validar la entrega en Odoo, informar el tracking a TiendaNube '
+             'para que el cliente reciba la notificación de envío.',
+    )
 
     # Webhooks
     webhook_url = fields.Char('Webhook URL', compute='_compute_webhook_url')
@@ -515,6 +520,63 @@ class TnInstance(models.Model):
                 message=f"No se pudo registrar el pago de {so.name}: {e}",
                 res_model='sale.order', res_id=so.id,
             )
+
+    # -------------------------------------------------------------------------
+    # Fulfillment notification
+    # -------------------------------------------------------------------------
+
+    def _notify_fulfillment(self, picking):
+        """
+        Notify TiendaNube that the order was shipped, with tracking info.
+        Tries the fulfillments endpoint first; on 404/405 (stores on the older
+        API) falls back to pack + fulfill.
+        """
+        self.ensure_one()
+        so = picking.sale_id
+        if not so or not so.tn_order_id:
+            return False
+
+        tracking = picking.carrier_tracking_ref or ''
+        body = {
+            'shipping_tracking_number': tracking,
+            'notify_customer': True,
+        }
+        try:
+            resp = self._call_api('POST', f'/orders/{so.tn_order_id}/fulfillments', json=body)
+            if resp.status_code in (404, 405):
+                # Older API: pack then fulfill
+                self._call_api('POST', f'/orders/{so.tn_order_id}/pack')
+                resp = self._call_api('POST', f'/orders/{so.tn_order_id}/fulfill', json=body)
+
+            if resp.status_code in (200, 201):
+                picking.message_post(
+                    body=_("Envío notificado a TiendaNube")
+                         + (f" — Tracking: {tracking}" if tracking else "")
+                )
+                self._mkt_log(
+                    'fulfillment', 'success', reference=so.tn_order_id,
+                    message=f"Tracking informado: {tracking or '(sin tracking)'}",
+                    res_model='stock.picking', res_id=picking.id,
+                )
+                return True
+
+            _logger.error(
+                "TN fulfillment error for order %s (%s): %s",
+                so.tn_order_id, resp.status_code, resp.text,
+            )
+            self._mkt_log(
+                'fulfillment', 'error', reference=so.tn_order_id,
+                message=f"Error notificando envío ({resp.status_code}): {resp.text[:500]}",
+                res_model='stock.picking', res_id=picking.id,
+            )
+        except Exception as e:
+            _logger.error("TN fulfillment exception for order %s: %s", so.tn_order_id, e)
+            self._mkt_log(
+                'fulfillment', 'error', reference=so.tn_order_id,
+                message=f"Excepción notificando envío: {e}",
+                res_model='stock.picking', res_id=picking.id,
+            )
+        return False
 
     # -------------------------------------------------------------------------
     # Cron: sync orders (fallback polling — webhook is primary)

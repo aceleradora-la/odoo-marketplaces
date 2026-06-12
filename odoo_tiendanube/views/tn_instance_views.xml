@@ -40,6 +40,7 @@
                             <field name="company_id" groups="base.group_multi_company"/>
                             <field name="pricelist_id"/>
                             <field name="stock_location_ids" widget="many2many_tags"/>
+                            <field name="notify_fulfillment"/>
                         </group>
                         <group string="Autenticación">
                             <field name="authorization_code" invisible="state == 'authenticated'"
