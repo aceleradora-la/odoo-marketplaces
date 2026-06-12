@@ -10,6 +10,14 @@ Compatible con **Odoo 18 y 19**, Community y Enterprise (no usa módulos Enterpr
 
 ## Módulos
 
+### `marketplace_base`
+
+Base común requerida por ambos conectores.
+- **Log de sincronización** (menú *Marketplaces → Log de Sincronización*): todos los
+  webhooks, sincronizaciones y errores quedan registrados y visibles en Odoo, con
+  botón **Reintentar** para reprocesar pedidos fallidos desde el payload guardado.
+- Cron diario de limpieza de logs exitosos (30 días).
+
 ### `odoo_mercadolibre`
 
 Integración completa con MercadoLibre (8 países: AR, BR, CL, MX, UY, CO, PE, VE).
@@ -21,7 +29,15 @@ Integración completa con MercadoLibre (8 países: AR, BR, CL, MX, UY, CO, PE, V
 - Diferenciación FULL vs envío propio: los pedidos FULL se despachan del almacén configurado y se validan automáticamente; los de envío propio solo reservan stock
 - Facturación y registro de pago automático con mapeo método de pago → diario contable
 - Subida de facturas a ML (fiscal documents)
-- Sincronización de precios y stock (cron cada 1 hora)
+- Sincronización de precios y stock (cron cada 1 hora), incluida convivencia
+  FULL + Flex vía user-products (MLA/MLC)
+- **Publicaciones con variantes**: variantes Odoo (talle/color) publicadas como
+  variations de ML; configurar el *Código de Atributo ML* (COLOR, SIZE…) en cada
+  atributo y SKU en cada variante
+- **Envíos**: estado y tracking en el pedido, descarga de etiqueta PDF, webhook
+  de cambios de estado (tópico `shipments`)
+- **Comisiones**: comisión ML y costo de envío del vendedor visibles en cada
+  pedido; opcionalmente factura de proveedor automática en borrador
 - Mensajería post-venta al chatter del pedido
 
 **Configuración inicial**
@@ -45,6 +61,11 @@ Integración con TiendaNube / Nuvemshop.
 - Registro automático de webhooks desde Odoo (botón, sin configuración manual)
 - Facturación y pago automático con mapeo gateway → diario contable
 - Cancelación automática del pedido en Odoo si se cancela en TN
+- **Tracking de envíos**: al validar la entrega en Odoo se informa el tracking a
+  TN y el cliente recibe la notificación (con botón manual de reenvío)
+- **Importación de catálogo**: botón para traer los productos existentes de la
+  tienda a Odoo, creando atributos y variantes automáticamente
+- **Categorías**: sincronización del árbol de categorías y asignación al publicar
 - Sincronización de precios y stock (cron cada 1 hora)
 
 **Configuración inicial**
