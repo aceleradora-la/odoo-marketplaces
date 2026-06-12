@@ -4,6 +4,20 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
+
+class MeliItemVariation(models.Model):
+    """Maps an ML item variation to an Odoo product variant."""
+    _name = 'meli.item.variation'
+    _description = 'MercadoLibre Item Variation'
+
+    item_id = fields.Many2one('meli.item', 'Publicación', required=True, ondelete='cascade')
+    product_id = fields.Many2one('product.product', 'Variante Odoo')
+    variation_id = fields.Char('ML Variation ID', readonly=True, index=True)
+    sku = fields.Char('SKU')
+    price = fields.Float('Precio')
+    available_quantity = fields.Integer('Cantidad')
+    user_product_id = fields.Char('User Product ID', readonly=True)
+
 class MeliItem(models.Model):
     _name = 'meli.item'
     _description = 'MercadoLibre Publication (Item)'
@@ -61,7 +75,83 @@ class MeliItem(models.Model):
         self.message_post(body="Se ha reseteado el estado a borrador.")
     
     permalink = fields.Char('Permalink', readonly=True)
-    
+    variation_ids = fields.One2many('meli.item.variation', 'item_id', string='Variaciones')
+    has_variants = fields.Boolean(compute='_compute_has_variants')
+
+    @api.depends('product_id.product_variant_ids')
+    def _compute_has_variants(self):
+        for rec in self:
+            rec.has_variants = rec.product_id.product_variant_count > 1
+
+    def _get_variant_price(self, variant):
+        """Price for a specific product.product using the instance pricelist."""
+        if self.instance_id.pricelist_id:
+            return self.instance_id.pricelist_id._get_product_price(variant, 1, False)
+        return variant.lst_price
+
+    def _get_variant_stock(self, variant):
+        """Free stock for a specific product.product in the instance locations."""
+        if self.instance_id.stock_location_ids:
+            quants = self.env['stock.quant'].search([
+                ('product_id', '=', variant.id),
+                ('location_id', 'child_of', self.instance_id.stock_location_ids.ids),
+            ])
+            return max(0, int(
+                sum(quants.mapped('quantity')) - sum(quants.mapped('reserved_quantity'))
+            ))
+        return max(0, int(variant.qty_available))
+
+    def _prepare_variations_json(self):
+        """Build the ML variations array from Odoo product variants."""
+        self.ensure_one()
+        variations = []
+        for variant in self.product_id.product_variant_ids:
+            combinations = []
+            for ptav in variant.product_template_attribute_value_ids:
+                code = ptav.attribute_id.meli_attribute_code
+                combinations.append({
+                    'id': code,
+                    'value_name': ptav.product_attribute_value_id.name,
+                })
+            variations.append({
+                'attribute_combinations': combinations,
+                'price': self._get_variant_price(variant),
+                'available_quantity': self._get_variant_stock(variant),
+                'attributes': [
+                    {'id': 'SELLER_SKU', 'value_name': variant.default_code or ''},
+                ],
+            })
+        return variations
+
+    def _sync_variations_from_response(self, ml_variations):
+        """Create/update meli.item.variation records from the ML API response,
+        matching Odoo variants by SKU (SELLER_SKU attribute)."""
+        self.ensure_one()
+        sku_to_variant = {
+            v.default_code: v for v in self.product_id.product_variant_ids if v.default_code
+        }
+        for mv in ml_variations:
+            sku = next(
+                (a.get('value_name') for a in (mv.get('attributes') or [])
+                 if a.get('id') == 'SELLER_SKU'),
+                '',
+            )
+            variation_id = str(mv.get('id', ''))
+            existing = self.variation_ids.filtered(lambda r: r.variation_id == variation_id)
+            vals = {
+                'item_id': self.id,
+                'variation_id': variation_id,
+                'sku': sku,
+                'price': mv.get('price') or 0,
+                'available_quantity': mv.get('available_quantity') or 0,
+                'product_id': sku_to_variant.get(sku).id if sku_to_variant.get(sku) else False,
+                'user_product_id': mv.get('user_product_id') or False,
+            }
+            if existing:
+                existing.write(vals)
+            else:
+                self.env['meli.item.variation'].create(vals)
+
     def _prepare_item_json(self):
         self.ensure_one()
         attributes = []
@@ -89,7 +179,7 @@ class MeliItem(models.Model):
                 'source': f"{base_url}/meli_image/meli.product.image/{img.id}/image_1920/extra_{img.id}.jpg"
             })
 
-        return {
+        payload = {
             'title': self.name,
             'category_id': self.meli_category_id.meli_id,
             'price': self.price,
@@ -107,6 +197,13 @@ class MeliItem(models.Model):
                 "free_shipping": self.free_shipping,
             }
         }
+
+        # Products with variants: quantity/price live in the variations array
+        if self.has_variants:
+            payload.pop('available_quantity', None)
+            payload['variations'] = self._prepare_variations_json()
+
+        return payload
         
     def _validate_before_publish(self):
         """Validate the item locally before hitting the ML API, with clear errors."""
@@ -126,6 +223,24 @@ class MeliItem(models.Model):
         missing = [a.name for a in missing_attrs if a not in filled_attr_ids]
         if missing:
             errors.append(_("Faltan atributos requeridos: %s") % ', '.join(missing))
+
+        if self.has_variants:
+            attrs_without_code = self.product_id.attribute_line_ids.attribute_id.filtered(
+                lambda a: not a.meli_attribute_code
+            )
+            if attrs_without_code:
+                errors.append(
+                    _("Atributos sin Código de Atributo ML (configurar en el atributo): %s")
+                    % ', '.join(attrs_without_code.mapped('name'))
+                )
+            variants_without_sku = self.product_id.product_variant_ids.filtered(
+                lambda v: not v.default_code
+            )
+            if variants_without_sku:
+                errors.append(
+                    _("Variantes sin SKU (referencia interna): %s")
+                    % ', '.join(variants_without_sku.mapped('display_name'))
+                )
 
         if errors:
             raise UserError(_("No se puede publicar '%s':\n- %s") % (self.name, '\n- '.join(errors)))
@@ -156,6 +271,8 @@ class MeliItem(models.Model):
                         'status': res.get('status'),
                         'permalink': res.get('permalink'),
                     })
+                    if res.get('variations'):
+                        rec._sync_variations_from_response(res['variations'])
                     rec.message_post(body=f"Publicado exitosamente. ML ID: {res.get('id')}")
                     _logger.info(f"Successfully published item {rec.name} to MercadoLibre")
                 else:
@@ -274,31 +391,33 @@ class MeliItem(models.Model):
             else:
                 rec.message_post(body=f"Error verificando estado en ML: {response.text}")
 
-    def _sync_selling_address_stock(self, stock):
+    def _sync_selling_address_stock(self, stock, user_product_id=None):
         """
         Update the seller-warehouse stock (selling_address) for a FULL+Flex item
         via the user-products endpoint. The meli_facility (FULL) stock is managed
         by ML and is never touched from Odoo.
 
+        `user_product_id` overrides the item-level one (used for variations).
         Requires the x-version header obtained from a previous GET; on 409
         (version conflict) the GET+PUT cycle is retried once.
         Rate limit of this resource: 100 RPM.
         """
         self.ensure_one()
-        base = f"https://api.mercadolibre.com/user-products/{self.user_product_id}/stock"
+        upid = user_product_id or self.user_product_id
+        base = f"https://api.mercadolibre.com/user-products/{upid}/stock"
 
         for attempt in (1, 2):
             get_resp = self.instance_id._call_api('GET', base)
             if get_resp.status_code != 200:
                 _logger.error(
                     "ML user-product %s: error fetching stock (%s): %s",
-                    self.user_product_id, get_resp.status_code, get_resp.text,
+                    upid, get_resp.status_code, get_resp.text,
                 )
                 return False
 
             x_version = get_resp.headers.get('x-version')
             if not x_version:
-                _logger.error("ML user-product %s: no x-version header in response", self.user_product_id)
+                _logger.error("ML user-product %s: no x-version header in response", upid)
                 return False
 
             current = next(
@@ -316,19 +435,51 @@ class MeliItem(models.Model):
             )
             if put_resp.status_code in (200, 204):
                 _logger.info(
-                    "ML user-product %s: selling_address stock set to %s", self.user_product_id, stock,
+                    "ML user-product %s: selling_address stock set to %s", upid, stock,
                 )
                 return True
             if put_resp.status_code == 409 and attempt == 1:
-                _logger.info("ML user-product %s: x-version conflict, retrying", self.user_product_id)
+                _logger.info("ML user-product %s: x-version conflict, retrying", upid)
                 continue
 
             _logger.error(
                 "ML user-product %s: stock update failed (%s): %s",
-                self.user_product_id, put_resp.status_code, put_resp.text,
+                upid, put_resp.status_code, put_resp.text,
             )
             return False
         return False
+
+    def _sync_variations_price_stock(self):
+        """Push per-variation price/stock for items published with variants."""
+        self.ensure_one()
+        variations_payload = []
+        for var in self.variation_ids.filtered('variation_id'):
+            if not var.product_id:
+                continue
+            price = self._get_variant_price(var.product_id)
+            stock = self._get_variant_stock(var.product_id)
+            if price == var.price and stock == var.available_quantity:
+                continue
+            var.write({'price': price, 'available_quantity': stock})
+
+            if self.is_full_flex and var.user_product_id:
+                # Convivencia: stock per variation through user-products
+                self._sync_selling_address_stock(stock, user_product_id=var.user_product_id)
+                variations_payload.append({'id': int(var.variation_id), 'price': price})
+            else:
+                variations_payload.append({
+                    'id': int(var.variation_id),
+                    'price': price,
+                    'available_quantity': stock,
+                })
+
+        if variations_payload:
+            url = f"https://api.mercadolibre.com/items/{self.meli_id}"
+            response = self.instance_id._call_api('PUT', url, json={'variations': variations_payload})
+            if response.status_code != 200:
+                _logger.error(
+                    "Failed to sync variations for %s: %s", self.meli_id, response.text
+                )
 
     def action_sync_price_stock(self):
         for rec in self:
@@ -336,6 +487,10 @@ class MeliItem(models.Model):
                 continue
 
             rec.instance_id.check_token_validity()
+
+            if rec.has_variants and rec.variation_ids:
+                rec._sync_variations_price_stock()
+                continue
 
             # Get Price from Instance Pricelist
             price = rec.price

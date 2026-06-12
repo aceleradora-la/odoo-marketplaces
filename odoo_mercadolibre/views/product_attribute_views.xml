@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_product_attribute_form_inherit_meli" model="ir.ui.view">
+        <field name="name">product.attribute.form.inherit.meli</field>
+        <field name="model">product.attribute</field>
+        <field name="inherit_id" ref="product.product_attribute_view_form"/>
+        <field name="arch" type="xml">
+            <field name="display_type" position="after">
+                <field name="meli_attribute_code" placeholder="ej: COLOR, SIZE"/>
+            </field>
+        </field>
+    </record>
+</odoo>

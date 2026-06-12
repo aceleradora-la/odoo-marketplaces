@@ -7,3 +7,4 @@ access_meli_product_attr_val,meli.product.attr.val.user,model_meli_product_attri
 access_meli_item,meli.item.user,model_meli_item,base.group_user,1,1,1,1
 access_meli_product_image,meli.product.image.user,model_meli_product_image,base.group_user,1,1,1,1
 access_meli_payment_method,meli.payment.method.user,model_meli_payment_method,base.group_system,1,1,1,1
+access_meli_item_variation,meli.item.variation.user,model_meli_item_variation,base.group_user,1,1,1,1

@@ -630,15 +630,31 @@ class MeliInstance(models.Model):
         order_lines = []
         for item in order.get('order_items', []):
             meli_item_id = item.get('item', {}).get('id')
+            variation_id = str(item.get('item', {}).get('variation_id') or '')
             qty = item.get('quantity', 1)
             price = item.get('unit_price', 0)
-            m_item = self.env['meli.item'].search([
-                ('meli_id', '=', meli_item_id),
-                ('instance_id', '=', self.id),
-            ], limit=1)
-            if m_item and m_item.product_id:
+
+            # Variant-level match first (items published with variations)
+            odoo_product = False
+            if variation_id:
+                variation = self.env['meli.item.variation'].search([
+                    ('variation_id', '=', variation_id),
+                    ('item_id.instance_id', '=', self.id),
+                ], limit=1)
+                if variation and variation.product_id:
+                    odoo_product = variation.product_id
+
+            if not odoo_product:
+                m_item = self.env['meli.item'].search([
+                    ('meli_id', '=', meli_item_id),
+                    ('instance_id', '=', self.id),
+                ], limit=1)
+                if m_item and m_item.product_id:
+                    odoo_product = m_item.product_id.product_variant_id
+
+            if odoo_product:
                 order_lines.append((0, 0, {
-                    'product_id': m_item.product_id.product_variant_id.id,
+                    'product_id': odoo_product.id,
                     'product_uom_qty': qty,
                     'price_unit': price,
                 }))
