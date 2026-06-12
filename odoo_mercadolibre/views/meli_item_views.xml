@@ -39,6 +39,10 @@
                             <field name="free_shipping"/>
                             <field name="local_pick_up"/>
                         </group>
+                        <group string="Logística ML" invisible="not meli_id">
+                            <field name="is_full_flex"/>
+                            <field name="user_product_id" invisible="not is_full_flex"/>
+                        </group>
                     </group>
                 </sheet>
                 <chatter>
