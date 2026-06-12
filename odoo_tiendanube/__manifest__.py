@@ -1,6 +1,6 @@
 {
     'name': 'TiendaNube Integration',
-    'version': '18.0.1.0.0',
+    'version': '19.0.1.1.0',
     'category': 'Sales',
     'summary': 'Integración entre Odoo y TiendaNube: productos, variantes, precios y pedidos',
     'author': 'aceleradora.la',

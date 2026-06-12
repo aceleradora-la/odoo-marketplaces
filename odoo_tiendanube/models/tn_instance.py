@@ -1,6 +1,8 @@
 from odoo import models, fields, api, _
 from odoo.exceptions import UserError
 import requests
+import json
+import datetime
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -15,6 +17,10 @@ class TnInstance(models.Model):
     _inherit = ['mail.thread']
 
     name = fields.Char('Store Name', required=True, tracking=True)
+    company_id = fields.Many2one(
+        'res.company', string='Compañía',
+        default=lambda self: self.env.company, required=True,
+    )
     app_id = fields.Char('App ID (Client ID)', required=True)
     app_secret = fields.Char('App Secret (Client Secret)', required=True)
     contact_email = fields.Char(
@@ -216,7 +222,6 @@ class TnInstance(models.Model):
             'products/deleted',
         ]
 
-        import json
         registered_ids = []
         errors = []
 
@@ -248,7 +253,6 @@ class TnInstance(models.Model):
     def action_unregister_webhooks(self):
         """Delete all registered webhooks for this store."""
         self.ensure_one()
-        import json
         ids = json.loads(self.webhook_ids_json or '[]')
         for wh_id in ids:
             resp = self._call_api('DELETE', f'/webhooks/{wh_id}')
@@ -374,14 +378,19 @@ class TnInstance(models.Model):
         gateway = (order_data.get('gateway') or '').lower().strip()
         payment_method = ((order_data.get('payment_details') or {}).get('method') or '').lower().strip()
 
-        so = self.env['sale.order'].create({
+        so_vals = {
             'partner_id': partner.id,
             'tn_order_id': tn_order_id,
             'tn_instance_id': self.id,
             'tn_gateway': gateway,
             'tn_payment_method': payment_method,
+            'company_id': self.company_id.id,
             'order_line': order_lines,
-        })
+        }
+        if self.pricelist_id:
+            so_vals['pricelist_id'] = self.pricelist_id.id
+
+        so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
         _logger.info("Created SO %s for TN order %s (store: %s)", so.name, tn_order_id, self.name)
 
@@ -398,24 +407,20 @@ class TnInstance(models.Model):
 
         if gateway:
             # Try exact match: gateway + method
-            mapping = self.env['tn.payment.method'].search([
-                ('instance_id', '=', self.id),
-                ('gateway_name', '=ilike', gateway),
-                ('payment_method_name', '=ilike', method),
-            ], limit=1)
+            mapping = self.env['tn.payment.method']
+            if method:
+                mapping = mapping.search([
+                    ('instance_id', '=', self.id),
+                    ('gateway_name', '=ilike', gateway),
+                    ('payment_method_name', '=ilike', method),
+                ], limit=1)
             if not mapping:
                 # Fallback: gateway only (method left empty in the mapping)
                 mapping = self.env['tn.payment.method'].search([
                     ('instance_id', '=', self.id),
                     ('gateway_name', '=ilike', gateway),
-                    ('payment_method_name', '=', False),
+                    ('payment_method_name', 'in', (False, '')),
                 ], limit=1)
-                if not mapping:
-                    mapping = self.env['tn.payment.method'].search([
-                        ('instance_id', '=', self.id),
-                        ('gateway_name', '=ilike', gateway),
-                        ('payment_method_name', 'in', (False, '')),
-                    ], limit=1)
             if mapping:
                 _logger.info(
                     "TN payment: gateway=%s method=%s → journal=%s",
@@ -425,7 +430,7 @@ class TnInstance(models.Model):
 
         # No mapping configured — fall back to first bank/cash journal
         journal = self.env['account.journal'].search(
-            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.env.company.id)],
+            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.company_id.id)],
             limit=1,
         )
         if not journal:
@@ -438,16 +443,34 @@ class TnInstance(models.Model):
         return journal
 
     def _register_payment_on_order(self, so, order_data):
+        """
+        Create and post the invoice, then register the payment.
+
+        The payment amount is the invoice residual — not the TN order total —
+        so the invoice is always fully reconciled even when the order total
+        includes shipping or discounts that are not invoice lines. Discrepancies
+        are logged for review.
+        """
         try:
             so._create_invoices()
             invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
             if not invoice:
+                _logger.warning("TN: no draft invoice after _create_invoices for SO %s", so.name)
                 return
             invoice.action_post()
 
-            total = float(order_data.get('total') or 0)
-            if total <= 0:
+            amount = invoice.amount_residual
+            if amount <= 0:
+                _logger.warning("TN: invoice residual is 0 for SO %s — skipping payment", so.name)
                 return
+
+            order_total = float(order_data.get('total') or 0)
+            if order_total and abs(order_total - amount) > 0.01:
+                _logger.warning(
+                    "TN order %s: order total %.2f differs from invoice %.2f "
+                    "(shipping/discounts) — registering invoice amount",
+                    so.tn_order_id, order_total, amount,
+                )
 
             journal = self._resolve_payment_journal(order_data)
             if not journal:
@@ -457,7 +480,7 @@ class TnInstance(models.Model):
                 active_model='account.move',
                 active_ids=invoice.ids,
             ).create({
-                'amount': total,
+                'amount': amount,
                 'journal_id': journal.id,
                 'payment_date': fields.Date.today(),
                 'communication': f"TN {so.tn_order_id}",
@@ -473,8 +496,12 @@ class TnInstance(models.Model):
     # Cron: sync orders (fallback polling — webhook is primary)
     # -------------------------------------------------------------------------
 
-    def action_sync_orders(self):
-        """Fetch recent paid orders from TiendaNube API."""
+    def action_sync_orders(self, days_back=30):
+        """Fetch paid orders created in the last `days_back` days from TiendaNube API."""
+        created_at_min = (
+            fields.Datetime.now() - datetime.timedelta(days=days_back)
+        ).strftime('%Y-%m-%dT00:00:00+00:00')
+
         for rec in self:
             if rec.state != 'authenticated':
                 continue
@@ -483,6 +510,7 @@ class TnInstance(models.Model):
                 while True:
                     resp = rec._call_api('GET', '/orders', params={
                         'payment_status': 'paid',
+                        'created_at_min': created_at_min,
                         'per_page': 50,
                         'page': page,
                     })
