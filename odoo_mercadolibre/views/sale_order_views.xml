@@ -11,11 +11,26 @@
             <xpath expr="//notebook" position="inside">
                 <page string="MercadoLibre" invisible="meli_order_id == False">
                     <group>
-                        <field name="meli_order_id"/>
-                        <field name="meli_instance_id"/>
-                        <field name="meli_payment_method"/>
-                        <field name="meli_payment_type"/>
+                        <group string="Pedido">
+                            <field name="meli_order_id"/>
+                            <field name="meli_instance_id"/>
+                            <field name="meli_payment_method"/>
+                            <field name="meli_payment_type"/>
+                        </group>
+                        <group string="Envío">
+                            <field name="meli_shipment_id"/>
+                            <field name="meli_logistic_type"/>
+                            <field name="meli_shipment_status"/>
+                            <field name="meli_tracking_number"/>
+                        </group>
                     </group>
+                    <div invisible="not meli_shipment_id">
+                        <button name="action_meli_shipment_status" string="Actualizar Estado de Envío"
+                                type="object" class="btn-secondary"/>
+                        <button name="action_meli_download_label" string="Descargar Etiqueta"
+                                type="object" class="btn-secondary"
+                                invisible="meli_logistic_type == 'fulfillment'"/>
+                    </div>
                 </page>
             </xpath>
         </field>

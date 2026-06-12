@@ -77,6 +77,23 @@ class MeliController(http.Controller):
                     message=f"Excepción procesando webhook: {e}", payload=payload,
                 )
 
+        elif 'shipments' in topic:
+            try:
+                shipment_id = resource.rstrip('/').split('/')[-1]
+                so = request.env['sale.order'].sudo().search(
+                    [('meli_shipment_id', '=', shipment_id)], limit=1
+                )
+                if so:
+                    so.action_meli_shipment_status()
+                else:
+                    _logger.info("ML Webhook: shipment %s not linked to any order yet", shipment_id)
+            except Exception as e:
+                _logger.error("ML Webhook: exception processing shipment notification — %s", str(e))
+                request.env['marketplace.sync.log'].sudo().log_event(
+                    'meli', 'other', 'error', reference=resource,
+                    message=f"Excepción procesando webhook de shipment: {e}", payload=payload,
+                )
+
         return request.make_response('{}', [('Content-Type', 'application/json')])
 
     @http.route('/meli/auth', type='http', auth="public")

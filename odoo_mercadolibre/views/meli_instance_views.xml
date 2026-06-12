@@ -47,7 +47,7 @@
                         </group>
                         <group string="Notificaciones (Webhooks)" colspan="2">
                             <field name="webhook_url" readonly="1"
-                                   help="Copiá esta URL en MercadoLibre Developers → Tu App → Notificaciones → URL de notificaciones. Activá el tópico 'orders_v2'."/>
+                                   help="Copiá esta URL en MercadoLibre Developers → Tu App → Notificaciones → URL de notificaciones. Activá los tópicos 'orders_v2' y 'shipments'."/>
                         </group>
                     </group>
                     <notebook>

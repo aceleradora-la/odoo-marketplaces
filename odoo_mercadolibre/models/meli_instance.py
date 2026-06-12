@@ -594,6 +594,13 @@ class MeliInstance(models.Model):
         so_vals['meli_payment_method'] = (first_payment.get('payment_method_id') or '').lower()
         so_vals['meli_payment_type'] = (first_payment.get('payment_type_id') or '').lower()
 
+        # Capture shipment reference for tracking/labels
+        shipping = order.get('shipping') or {}
+        if shipping.get('id'):
+            so_vals['meli_shipment_id'] = str(shipping['id'])
+        if shipping.get('logistic_type'):
+            so_vals['meli_logistic_type'] = shipping['logistic_type']
+
         so = self.env['sale.order'].create(so_vals)
         so.action_confirm()
 
