@@ -33,6 +33,12 @@
                             <field name="available_quantity"/>
                             <field name="permalink" widget="url"/>
                         </group>
+                        <group string="Publicación">
+                            <field name="condition"/>
+                            <field name="shipping_mode"/>
+                            <field name="free_shipping"/>
+                            <field name="local_pick_up"/>
+                        </group>
                     </group>
                 </sheet>
                 <chatter>

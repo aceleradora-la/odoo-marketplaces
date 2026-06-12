@@ -32,6 +32,18 @@ class MeliItem(models.Model):
         ('gold_pro', 'Premium')
     ], string='Listing Type', required=True, default='gold_special', tracking=True)
 
+    condition = fields.Selection([
+        ('new', 'Nuevo'),
+        ('used', 'Usado'),
+        ('refurbished', 'Reacondicionado'),
+    ], string='Condición', required=True, default='new', tracking=True)
+    shipping_mode = fields.Selection([
+        ('me2', 'Mercado Envíos'),
+        ('not_specified', 'A acordar con el comprador'),
+    ], string='Modo de Envío', required=True, default='me2')
+    free_shipping = fields.Boolean('Envío Gratis', default=False)
+    local_pick_up = fields.Boolean('Retiro en Persona', default=True)
+
     def action_back_to_draft(self):
         self.ensure_one()
         self.write({'status': 'draft'})
@@ -74,23 +86,46 @@ class MeliItem(models.Model):
             'available_quantity': self.available_quantity,
             'buying_mode': 'buy_it_now',
             'listing_type_id': self.listing_type,
-            'condition': 'new',
+            'condition': self.condition,
             'description': {"plain_text": self.product_id.description_sale or self.name},
-            'video_id': None,
             'pictures': pictures,
             'attributes': attributes,
             "shipping": {
-                "mode": "me2",
-                "local_pick_up": True,
-                "free_shipping": False,
+                "mode": self.shipping_mode,
+                "local_pick_up": self.local_pick_up,
+                "free_shipping": self.free_shipping,
             }
         }
         
+    def _validate_before_publish(self):
+        """Validate the item locally before hitting the ML API, with clear errors."""
+        self.ensure_one()
+        errors = []
+        if not self.meli_category_id:
+            errors.append(_("El producto no tiene categoría de MercadoLibre asignada."))
+        elif not self.meli_category_id.is_leaf:
+            errors.append(_("La categoría '%s' no es una categoría hoja: elegí una subcategoría final.") % self.meli_category_id.name)
+        if self.price <= 0:
+            errors.append(_("El precio debe ser mayor a 0."))
+        if self.available_quantity <= 0:
+            errors.append(_("La cantidad disponible debe ser mayor a 0."))
+
+        missing_attrs = self.meli_category_id.attribute_ids.filtered('is_required') if self.meli_category_id else []
+        filled_attr_ids = self.product_id.meli_attribute_value_ids.filtered('value').mapped('meli_attribute_id')
+        missing = [a.name for a in missing_attrs if a not in filled_attr_ids]
+        if missing:
+            errors.append(_("Faltan atributos requeridos: %s") % ', '.join(missing))
+
+        if errors:
+            raise UserError(_("No se puede publicar '%s':\n- %s") % (self.name, '\n- '.join(errors)))
+
     def action_publish(self):
         for rec in self:
             if rec.status != 'draft':
                 continue
-            
+
+            rec._validate_before_publish()
+
             # Ensure token is valid before starting
             try:
                 rec.instance_id.check_token_validity()
@@ -140,8 +175,11 @@ class MeliItem(models.Model):
                 else:
                     _logger.error(f"Error pausing item {rec.meli_id}: {response.text}")
                     raise UserError(_("Error pausing item: %s") % response.text)
+            except UserError:
+                raise
             except Exception as e:
                 _logger.error(f"Exception while pausing item {rec.meli_id}: {str(e)}")
+                raise UserError(_("Error de conexión al pausar la publicación: %s") % str(e))
 
     def action_activate(self):
         for rec in self:
@@ -159,8 +197,11 @@ class MeliItem(models.Model):
                 else:
                     _logger.error(f"Error activating item {rec.meli_id}: {response.text}")
                     raise UserError(_("Error activating item: %s") % response.text)
+            except UserError:
+                raise
             except Exception as e:
                 _logger.error(f"Exception while activating item {rec.meli_id}: {str(e)}")
+                raise UserError(_("Error de conexión al activar la publicación: %s") % str(e))
 
     def action_close(self):
         for rec in self:
@@ -179,8 +220,11 @@ class MeliItem(models.Model):
                 else:
                     _logger.error(f"Error closing item {rec.meli_id}: {response.text}")
                     raise UserError(_("Error closing item: %s") % response.text)
+            except UserError:
+                raise
             except Exception as e:
                 _logger.error(f"Exception while closing item {rec.meli_id}: {str(e)}")
+                raise UserError(_("Error de conexión al cerrar la publicación: %s") % str(e))
 
     def unlink(self):
         for rec in self:
@@ -345,12 +389,13 @@ class MeliItem(models.Model):
                 product = self.env['product.template'].search([('name', '=', data.get('title'))], limit=1)
             
             if not product:
-                # Create a minimal product template
+                # Create a minimal product template that tracks stock (Odoo 18/19)
                 product = self.env['product.template'].create({
                     'name': data.get('title'),
                     'list_price': data.get('price'),
                     'default_code': sku or '',
-                    'type': 'consu', # or 'product' depending on stock
+                    'type': 'consu',
+                    'is_storable': True,
                 })
             
             vals.update({

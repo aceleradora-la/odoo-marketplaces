@@ -3,7 +3,6 @@ from odoo.exceptions import UserError
 import requests
 import datetime
 import logging
-import io
 
 _logger = logging.getLogger(__name__)
 
@@ -22,8 +21,13 @@ _MELI_SITES = {
 class MeliInstance(models.Model):
     _name = 'meli.instance'
     _description = 'MercadoLibre Instance'
+    _inherit = ['mail.thread']
 
-    name = fields.Char('Account Name', required=True)
+    name = fields.Char('Account Name', required=True, tracking=True)
+    company_id = fields.Many2one(
+        'res.company', string='Compañía',
+        default=lambda self: self.env.company, required=True,
+    )
     site_id = fields.Selection([
         ('MLA', 'Argentina'),
         ('MLB', 'Brasil'),
@@ -349,12 +353,11 @@ class MeliInstance(models.Model):
             },
         }
 
-    def _resolve_payment_journal(self, payments):
+    def _resolve_payment_journal(self, payments, company):
         """
         Resolve the Odoo journal from the ML order payments list.
         payments: list of dicts with payment_method_id and payment_type_id.
-        Uses the first approved payment entry.
-        Lookup: specific method_id → type fallback → first bank/cash journal.
+        Lookup: specific method_id → type fallback → first bank/cash journal of the company.
         """
         for p in payments:
             if p.get('status') not in ('approved', 'in_process', None):
@@ -366,6 +369,7 @@ class MeliInstance(models.Model):
                 mapping = self.env['meli.payment.method'].search([
                     ('instance_id', '=', self.id),
                     ('payment_method_id', '=ilike', method_id),
+                    ('journal_id', '!=', False),
                 ], limit=1)
                 if mapping:
                     _logger.info("ML payment: method=%s → journal=%s", method_id, mapping.journal_id.name)
@@ -376,13 +380,14 @@ class MeliInstance(models.Model):
                     ('instance_id', '=', self.id),
                     ('payment_method_id', 'in', (False, '')),
                     ('payment_type_id', '=ilike', type_id),
+                    ('journal_id', '!=', False),
                 ], limit=1)
                 if mapping:
                     _logger.info("ML payment: type=%s → journal=%s", type_id, mapping.journal_id.name)
                     return mapping.journal_id
 
         journal = self.env['account.journal'].search(
-            [('type', 'in', ('bank', 'cash')), ('company_id', '=', self.env.company.id)],
+            [('type', 'in', ('bank', 'cash')), ('company_id', '=', company.id)],
             limit=1,
         )
         if journal:
@@ -393,24 +398,46 @@ class MeliInstance(models.Model):
         return journal
 
     def _register_payment_on_order(self, so, order):
-        """Create invoice and register payment for a confirmed ML sale order."""
+        """
+        Create and post the invoice, then register the payment against it.
+
+        The payment amount is the invoice residual — not the ML gateway total —
+        so the invoice is always fully reconciled even when the gateway total
+        includes shipping or fees that are not invoice lines. Discrepancies
+        against the gateway total are logged for review.
+        """
         try:
             so._create_invoices()
             invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
             if not invoice:
                 _logger.warning("ML: no draft invoice after _create_invoices for SO %s", so.name)
                 return
+
+            # Propagate ML references so the invoice-upload cron can find it
+            invoice.write({
+                'meli_order_id': so.meli_order_id,
+                'meli_instance_id': self.id,
+            })
             invoice.action_post()
 
-            payments = order.get('payments') or []
-            total = sum(float(p.get('total_paid_amount') or 0) for p in payments if p.get('status') == 'approved')
-            if total <= 0:
-                total = float(order.get('total_amount') or 0)
-            if total <= 0:
-                _logger.warning("ML: payment total is 0 for SO %s — skipping", so.name)
+            amount = invoice.amount_residual
+            if amount <= 0:
+                _logger.warning("ML: invoice residual is 0 for SO %s — skipping payment", so.name)
                 return
 
-            journal = self._resolve_payment_journal(payments)
+            payments = order.get('payments') or []
+            gateway_total = sum(
+                float(p.get('total_paid_amount') or 0)
+                for p in payments if p.get('status') == 'approved'
+            )
+            if gateway_total and abs(gateway_total - amount) > 0.01:
+                _logger.warning(
+                    "ML order %s: gateway total %.2f differs from invoice %.2f "
+                    "(shipping/fees) — registering invoice amount",
+                    so.meli_order_id, gateway_total, amount,
+                )
+
+            journal = self._resolve_payment_journal(payments, so.company_id)
             if not journal:
                 return
 
@@ -418,7 +445,7 @@ class MeliInstance(models.Model):
                 active_model='account.move',
                 active_ids=invoice.ids,
             ).create({
-                'amount': total,
+                'amount': amount,
                 'journal_id': journal.id,
                 'payment_date': fields.Date.today(),
                 'communication': f"ML {so.meli_order_id}",
@@ -443,24 +470,20 @@ class MeliInstance(models.Model):
         city = shipping.get('city', {}).get('name', '') if isinstance(shipping.get('city'), dict) else ''
         zip_code = shipping.get('zip_code', '')
 
-        partner = (
-            self.env['res.partner'].search([('meli_user_id', '=', meli_user_id)], limit=1)
-            if meli_user_id else self.env['res.partner']
-        )
+        partner = self.env['res.partner']
+        if meli_user_id:
+            partner = partner.search([('meli_user_id', '=', meli_user_id)], limit=1)
         if not partner and email:
             partner = self.env['res.partner'].search([('email', '=', email)], limit=1)
 
+        # Only fill fields the partner doesn't have yet — never overwrite existing data
         vals = {'meli_user_id': meli_user_id, 'meli_nickname': nickname}
-        if email and not partner.email if partner else email:
-            vals['email'] = email
-        if phone and not partner.phone if partner else phone:
-            vals['phone'] = phone
-        if street and not partner.street if partner else street:
-            vals['street'] = street
-        if city and not partner.city if partner else city:
-            vals['city'] = city
-        if zip_code and not partner.zip if partner else zip_code:
-            vals['zip'] = zip_code
+        for field_name, value in (
+            ('email', email), ('phone', phone),
+            ('street', street), ('city', city), ('zip', zip_code),
+        ):
+            if value and (not partner or not partner[field_name]):
+                vals[field_name] = value
 
         if partner:
             partner.write(vals)
@@ -481,53 +504,6 @@ class MeliInstance(models.Model):
             return True
         logistic_type = (order.get('shipping') or {}).get('logistic_type', '')
         return logistic_type == 'fulfillment'
-
-    def _register_payment_on_order(self, so, order):
-        """
-        Create invoice and register payment for a self-fulfilled paid ML order.
-        The payment amount comes from the ML order total.
-        """
-        try:
-            so._create_invoices()
-            invoice = so.invoice_ids.filtered(lambda i: i.state == 'draft')[:1]
-            if not invoice:
-                _logger.warning("SO %s: no draft invoice found after _create_invoices", so.name)
-                return
-            invoice.action_post()
-
-            payment_total = order.get('total_amount') or sum(
-                l.get('unit_price', 0) * l.get('quantity', 1)
-                for l in order.get('order_items', [])
-            )
-            if payment_total <= 0:
-                _logger.warning("SO %s: payment_total is 0 — skipping payment registration", so.name)
-                return
-
-            journal = self.env['account.journal'].search(
-                [('type', 'in', ('bank', 'cash')), ('company_id', '=', so.company_id.id)],
-                limit=1,
-            )
-            if not journal:
-                _logger.warning("SO %s: no bank/cash journal found — skipping payment registration", so.name)
-                return
-
-            payment_register = self.env['account.payment.register'].with_context(
-                active_model='account.move',
-                active_ids=invoice.ids,
-            ).create({
-                'amount': payment_total,
-                'journal_id': journal.id,
-                'payment_date': fields.Date.today(),
-                'communication': f"ML {so.meli_order_id}",
-            })
-            payment_register.action_create_payments()
-            _logger.info("Payment registered for SO %s (ML order %s)", so.name, so.meli_order_id)
-
-        except Exception as e:
-            _logger.error(
-                "Could not register payment for SO %s: %s — manual payment required",
-                so.name, str(e),
-            )
 
     def _process_single_order(self, order):
         """
@@ -585,8 +561,11 @@ class MeliInstance(models.Model):
             'partner_id': partner.id,
             'meli_order_id': order_id,
             'meli_instance_id': self.id,
+            'company_id': self.company_id.id,
             'order_line': order_lines,
         }
+        if self.pricelist_id:
+            so_vals['pricelist_id'] = self.pricelist_id.id
         if is_full and self.warehouse_full_id:
             so_vals['warehouse_id'] = self.warehouse_full_id.id
 
@@ -629,7 +608,12 @@ class MeliInstance(models.Model):
         if ml_status == 'paid':
             self._register_payment_on_order(so, order)
 
-    def action_sync_orders(self):
+    def action_sync_orders(self, days_back=30):
+        """Fallback polling: fetch paid orders created in the last `days_back` days."""
+        date_from = (
+            fields.Datetime.now() - datetime.timedelta(days=days_back)
+        ).strftime('%Y-%m-%dT00:00:00.000-00:00')
+
         for rec in self:
             if rec.state != 'authenticated':
                 continue
@@ -647,6 +631,7 @@ class MeliInstance(models.Model):
                     params = {
                         'seller': seller_id,
                         'order.status': 'paid',
+                        'order.date_created.from': date_from,
                         'offset': offset,
                         'limit': limit,
                     }
