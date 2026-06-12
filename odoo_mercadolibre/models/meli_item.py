@@ -32,6 +32,17 @@ class MeliItem(models.Model):
         ('gold_pro', 'Premium')
     ], string='Listing Type', required=True, default='gold_special', tracking=True)
 
+    user_product_id = fields.Char(
+        'User Product ID', readonly=True,
+        help='ID del user-product de ML, necesario para gestionar stock por ubicación '
+             '(convivencia FULL + Flex).',
+    )
+    is_full_flex = fields.Boolean(
+        'Convivencia FULL + Flex', readonly=True,
+        help='El ítem tiene logística fulfillment y Flex activos a la vez. El stock del '
+             'depósito propio (selling_address) se sincroniza vía el endpoint de user-products.',
+    )
+
     condition = fields.Selection([
         ('new', 'Nuevo'),
         ('used', 'Usado'),
@@ -251,28 +262,86 @@ class MeliItem(models.Model):
                     'inactive': 'paused',
                 }
                 new_status = status_map.get(data.get('status'), 'error')
-                rec.write({
+                vals = {
                     'status': new_status,
                     'price': data.get('price'),
                     'available_quantity': data.get('available_quantity'),
                     'permalink': data.get('permalink'),
-                })
+                }
+                vals.update(self._extract_convivencia_vals(data))
+                rec.write(vals)
                 rec.message_post(body=f"Estado verificado en ML: {data.get('status')} (Odoo: {new_status})")
             else:
                 rec.message_post(body=f"Error verificando estado en ML: {response.text}")
+
+    def _sync_selling_address_stock(self, stock):
+        """
+        Update the seller-warehouse stock (selling_address) for a FULL+Flex item
+        via the user-products endpoint. The meli_facility (FULL) stock is managed
+        by ML and is never touched from Odoo.
+
+        Requires the x-version header obtained from a previous GET; on 409
+        (version conflict) the GET+PUT cycle is retried once.
+        Rate limit of this resource: 100 RPM.
+        """
+        self.ensure_one()
+        base = f"https://api.mercadolibre.com/user-products/{self.user_product_id}/stock"
+
+        for attempt in (1, 2):
+            get_resp = self.instance_id._call_api('GET', base)
+            if get_resp.status_code != 200:
+                _logger.error(
+                    "ML user-product %s: error fetching stock (%s): %s",
+                    self.user_product_id, get_resp.status_code, get_resp.text,
+                )
+                return False
+
+            x_version = get_resp.headers.get('x-version')
+            if not x_version:
+                _logger.error("ML user-product %s: no x-version header in response", self.user_product_id)
+                return False
+
+            current = next(
+                (l.get('quantity') for l in get_resp.json().get('locations', [])
+                 if l.get('type') == 'selling_address'),
+                None,
+            )
+            if current == stock:
+                return True  # already in sync
+
+            put_resp = self.instance_id._call_api(
+                'PUT', f"{base}/type/selling_address",
+                json={'quantity': stock},
+                headers={'x-version': str(x_version)},
+            )
+            if put_resp.status_code in (200, 204):
+                _logger.info(
+                    "ML user-product %s: selling_address stock set to %s", self.user_product_id, stock,
+                )
+                return True
+            if put_resp.status_code == 409 and attempt == 1:
+                _logger.info("ML user-product %s: x-version conflict, retrying", self.user_product_id)
+                continue
+
+            _logger.error(
+                "ML user-product %s: stock update failed (%s): %s",
+                self.user_product_id, put_resp.status_code, put_resp.text,
+            )
+            return False
+        return False
 
     def action_sync_price_stock(self):
         for rec in self:
             if rec.status != 'active' or not rec.meli_id:
                 continue
-            
+
             rec.instance_id.check_token_validity()
-            
+
             # Get Price from Instance Pricelist
             price = rec.price
             if rec.instance_id.pricelist_id:
                 price = rec.instance_id.pricelist_id._get_product_price(rec.product_id, 1, False)
-            
+
             # Get Stock from Instance Location
             stock = rec.available_quantity
             if rec.instance_id.stock_location_ids:
@@ -283,24 +352,35 @@ class MeliItem(models.Model):
                 stock = sum(quants.mapped('quantity')) - sum(quants.mapped('reserved_quantity'))
                 stock = max(0, int(stock))
 
-            if price != rec.price or stock != rec.available_quantity:
-                rec.price = price
-                rec.available_quantity = stock
-                
-                # Update in ML
-                url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
-                data = {
-                    'price': rec.price,
-                    'available_quantity': rec.available_quantity
-                }
-                try:
+            price_changed = price != rec.price
+            stock_changed = stock != rec.available_quantity
+            if not price_changed and not stock_changed:
+                continue
+
+            rec.price = price
+            rec.available_quantity = stock
+
+            try:
+                if rec.is_full_flex and rec.user_product_id:
+                    # Convivencia FULL+Flex: stock must go through user-products
+                    # (PUT /items with available_quantity is rejected for these items)
+                    if stock_changed:
+                        rec._sync_selling_address_stock(stock)
+                    if price_changed:
+                        url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
+                        response = rec.instance_id._call_api('PUT', url, json={'price': price})
+                        if response.status_code != 200:
+                            _logger.error(f"Failed to sync price for {rec.meli_id}: {response.text}")
+                else:
+                    url = f"https://api.mercadolibre.com/items/{rec.meli_id}"
+                    data = {'price': price, 'available_quantity': stock}
                     response = rec.instance_id._call_api('PUT', url, json=data)
                     if response.status_code == 200:
                         _logger.info(f"Successfully synced price and stock for item {rec.meli_id}")
                     else:
                         _logger.error(f"Failed to sync price/stock for {rec.meli_id}: {response.text}")
-                except Exception as e:
-                    _logger.error(f"Exception syncing price/stock for {rec.meli_id}: {str(e)}")
+            except Exception as e:
+                _logger.error(f"Exception syncing price/stock for {rec.meli_id}: {str(e)}")
                 
     @api.model
     def action_import_items(self, instance):
@@ -355,10 +435,35 @@ class MeliItem(models.Model):
                 break
 
     @api.model
+    def _extract_convivencia_vals(self, data):
+        """
+        Extract user_product_id and FULL+Flex convivencia flag from an ML item payload.
+        Convivencia = logistic_type 'fulfillment' + tag 'self_service_in' on shipping.
+        For items with variations, user_product_id lives inside the variations array.
+        """
+        shipping = data.get('shipping') or {}
+        ship_tags = shipping.get('tags') or []
+        is_full_flex = (
+            shipping.get('logistic_type') == 'fulfillment'
+            and 'self_service_in' in ship_tags
+        )
+
+        user_product_id = data.get('user_product_id')
+        if not user_product_id:
+            variations = data.get('variations') or []
+            if variations:
+                user_product_id = variations[0].get('user_product_id')
+
+        return {
+            'user_product_id': user_product_id or False,
+            'is_full_flex': is_full_flex,
+        }
+
+    @api.model
     def _create_or_update_from_ml(self, data, instance):
         meli_id = data.get('id')
         existing = self.search([('meli_id', '=', meli_id)], limit=1)
-        
+
         status_map = {
             'active': 'active',
             'paused': 'paused',
@@ -366,7 +471,7 @@ class MeliItem(models.Model):
             'under_review': 'paused',
             'inactive': 'paused',
         }
-        
+
         vals = {
             'name': data.get('title'),
             'price': data.get('price'),
@@ -375,6 +480,7 @@ class MeliItem(models.Model):
             'permalink': data.get('permalink'),
             'instance_id': instance.id,
         }
+        vals.update(self._extract_convivencia_vals(data))
         
         if not existing:
             # Match product or create new one
