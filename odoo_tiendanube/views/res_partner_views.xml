@@ -5,10 +5,12 @@
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="base.view_partner_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//page[@name='sales_purchases']" position="inside">
-                <group string="TiendaNube" invisible="not tn_customer_id">
-                    <field name="tn_customer_id" readonly="1"/>
-                </group>
+            <xpath expr="//notebook" position="inside">
+                <page string="TiendaNube" name="tiendanube" invisible="not tn_customer_id">
+                    <group>
+                        <field name="tn_customer_id" readonly="1"/>
+                    </group>
+                </page>
             </xpath>
         </field>
     </record>

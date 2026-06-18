@@ -5,13 +5,15 @@
         <field name="model">sale.order</field>
         <field name="inherit_id" ref="sale.view_order_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//page[@name='other_info']" position="inside">
-                <group string="TiendaNube" invisible="not tn_order_id">
-                    <field name="tn_order_id" readonly="1"/>
-                    <field name="tn_instance_id" readonly="1"/>
-                    <field name="tn_gateway" readonly="1"/>
-                    <field name="tn_payment_method" readonly="1"/>
-                </group>
+            <xpath expr="//notebook" position="inside">
+                <page string="TiendaNube" name="tiendanube" invisible="not tn_order_id">
+                    <group>
+                        <field name="tn_order_id" readonly="1"/>
+                        <field name="tn_instance_id" readonly="1"/>
+                        <field name="tn_gateway" readonly="1"/>
+                        <field name="tn_payment_method" readonly="1"/>
+                    </group>
+                </page>
             </xpath>
         </field>
     </record>
