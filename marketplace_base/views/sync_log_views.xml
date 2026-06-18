@@ -68,10 +68,10 @@
                 <filter string="Errores" name="errors" domain="[('state', '=', 'error')]"/>
                 <filter string="MercadoLibre" name="meli" domain="[('channel', '=', 'meli')]"/>
                 <filter string="TiendaNube" name="tn" domain="[('channel', '=', 'tiendanube')]"/>
-                <group expand="0" string="Agrupar por">
-                    <filter string="Canal" name="group_channel" context="{'group_by': 'channel'}"/>
-                    <filter string="Operación" name="group_operation" context="{'group_by': 'operation'}"/>
-                    <filter string="Estado" name="group_state" context="{'group_by': 'state'}"/>
+                <group string="Agrupar por">
+                    <filter string="Canal" name="group_channel" domain="[]" context="{'group_by': 'channel'}"/>
+                    <filter string="Operación" name="group_operation" domain="[]" context="{'group_by': 'operation'}"/>
+                    <filter string="Estado" name="group_state" domain="[]" context="{'group_by': 'state'}"/>
                 </group>
             </search>
         </field>
