@@ -16,7 +16,7 @@ class MarketplaceSyncLog(models.Model):
     _description = 'Marketplace Sync Log'
     _order = 'create_date desc'
 
-    name = fields.Char(compute='_compute_name')
+    name = fields.Char(compute='_compute_name', store=True)
     channel = fields.Selection([
         ('meli', 'MercadoLibre'),
         ('tiendanube', 'TiendaNube'),
