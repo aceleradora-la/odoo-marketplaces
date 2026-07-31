@@ -1,6 +1,6 @@
 {
     'name': 'Marketplace Connector Base',
-    'version': '18.0.1.0.0',
+    'version': '18.0.1.1.0',
     'category': 'Sales',
     'summary': 'Base común para conectores de marketplaces: log de sincronización',
     'description': """
@@ -14,7 +14,7 @@ Base común para los conectores de marketplaces de aceleradora.la.
     'maintainer': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
-    'depends': ['base', 'mail'],
+    'depends': ['base', 'mail', 'product'],
     'data': [
         'security/ir.model.access.csv',
         'data/ir_cron.xml',

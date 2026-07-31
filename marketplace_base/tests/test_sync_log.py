@@ -5,6 +5,43 @@ from odoo.tests.common import TransactionCase, tagged
 
 
 @tagged('post_install', '-at_install')
+class TestMarketplacePrices(TransactionCase):
+
+    def test_helper_resolves_chained_percentage_pricelist(self):
+        """The RPC helper must return engine-computed prices, including
+        formula rules based on another pricelist (the case that a naive
+        fixed-rule reader cannot resolve)."""
+        product = self.env['product.product'].create({
+            'name': 'Producto Precio Test', 'list_price': 1000.0,
+        })
+        base_list = self.env['product.pricelist'].create({
+            'name': 'Base Test',
+            'item_ids': [(0, 0, {
+                'applied_on': '3_global',
+                'compute_price': 'fixed',
+                'fixed_price': 800.0,
+            })],
+        })
+        chained = self.env['product.pricelist'].create({
+            'name': 'Mayorista Test',
+            'item_ids': [(0, 0, {
+                'applied_on': '3_global',
+                'compute_price': 'formula',
+                'base': 'pricelist',
+                'base_pricelist_id': base_list.id,
+                'price_discount': 10.0,   # base -10%
+            })],
+        })
+        prices = chained.get_marketplace_prices([product.id])
+        self.assertEqual(prices[str(product.id)], 720.0)  # 800 - 10%
+
+    def test_helper_empty_and_missing_products(self):
+        pricelist = self.env['product.pricelist'].create({'name': 'Vacia Test'})
+        self.assertEqual(pricelist.get_marketplace_prices([]), {})
+        self.assertEqual(pricelist.get_marketplace_prices([99999999]), {})
+
+
+@tagged('post_install', '-at_install')
 class TestMarketplaceSyncLog(TransactionCase):
 
     def test_log_event_creates_record(self):
