@@ -64,7 +64,7 @@ class TiendaNubeController(http.Controller):
                 )
                 return request.make_response('{}', [('Content-Type', 'application/json')])
 
-            if event in ('orders/paid', 'orders/created'):
+            if event in ('order/paid', 'order/created'):
                 resp = instance._call_api('GET', f'/orders/{resource_id}')
                 if resp.status_code == 200:
                     instance.sudo()._process_single_order(resp.json())
@@ -76,13 +76,13 @@ class TiendaNubeController(http.Controller):
                         payload=payload,
                     )
 
-            elif event == 'orders/cancelled':
+            elif event == 'order/cancelled':
                 self._handle_order_cancelled(instance, resource_id)
 
-            elif event in ('products/updated', 'products/created'):
+            elif event in ('product/updated', 'product/created'):
                 self._handle_product_updated(instance, resource_id)
 
-            elif event == 'products/deleted':
+            elif event == 'product/deleted':
                 self._handle_product_deleted(instance, resource_id)
 
         except Exception as e:
