@@ -20,6 +20,7 @@ class MarketplaceSyncLog(models.Model):
     channel = fields.Selection([
         ('meli', 'MercadoLibre'),
         ('tiendanube', 'TiendaNube'),
+        ('other', 'Otro'),
     ], required=True, index=True)
     instance_name = fields.Char('Cuenta / Tienda', index=True)
     operation = fields.Selection([

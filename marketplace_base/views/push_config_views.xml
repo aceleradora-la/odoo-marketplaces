@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_marketplace_push_config_form" model="ir.ui.view">
+        <field name="name">marketplace.push.config.form</field>
+        <field name="model">marketplace.push.config</field>
+        <field name="arch" type="xml">
+            <form string="Notificaciones a Acelio">
+                <header>
+                    <button name="action_test_connection" string="Probar conexión" type="object"
+                            class="oe_highlight"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="acelio_tenant" placeholder="mi-cuenta"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="enabled"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                        <group>
+                            <field name="last_push_state"/>
+                            <field name="last_push_date"/>
+                        </group>
+                    </group>
+                    <group string="Datos que te da Acelio">
+                        <field name="acelio_webhook_url"
+                               placeholder="https://app.acelio.la/api/sync/webhooks/odoo"/>
+                        <field name="acelio_secret" widget="password"
+                               placeholder="Secreto generado en Acelio"/>
+                    </group>
+                    <group string="Último aviso" invisible="not last_push_message">
+                        <field name="last_push_message" nolabel="1" readonly="1"/>
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        En Acelio entrá a <b>Sync → Configuración → la conexión de Tiendanube</b> y copiá
+                        de la tarjeta "Aviso de entregas desde Odoo" la URL, la cuenta y el secreto.
+                        Con esto, al validar una entrega Odoo le avisa a Acelio en el momento y el
+                        despacho se informa al marketplace sin esperar la sincronización periódica.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_marketplace_push_config_list" model="ir.ui.view">
+        <field name="name">marketplace.push.config.list</field>
+        <field name="model">marketplace.push.config</field>
+        <field name="arch" type="xml">
+            <list string="Notificaciones a Acelio">
+                <field name="acelio_tenant"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+                <field name="acelio_webhook_url"/>
+                <field name="enabled" widget="boolean_toggle"/>
+                <field name="last_push_state" widget="badge"
+                       decoration-success="last_push_state == 'success'"
+                       decoration-danger="last_push_state == 'error'"/>
+                <field name="last_push_date"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_marketplace_push_config" model="ir.actions.act_window">
+        <field name="name">Notificaciones a Acelio</field>
+        <field name="res_model">marketplace.push.config</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Configurá el aviso en tiempo real hacia Acelio.
+            </p>
+            <p>
+                Al validar una entrega de un pedido de marketplace, Odoo le avisa a Acelio
+                para que informe el despacho al canal en el momento.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_marketplace_config"
+              name="Configuración"
+              parent="menu_marketplace_root"
+              sequence="90"/>
+    <menuitem id="menu_marketplace_push_config"
+              name="Notificaciones a Acelio"
+              parent="menu_marketplace_config"
+              action="action_marketplace_push_config"
+              sequence="10"/>
+</odoo>
