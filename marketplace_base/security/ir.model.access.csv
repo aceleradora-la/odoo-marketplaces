@@ -1,3 +1,4 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_marketplace_sync_log_user,marketplace.sync.log user,model_marketplace_sync_log,base.group_user,1,0,0,0
 access_marketplace_sync_log_manager,marketplace.sync.log manager,model_marketplace_sync_log,base.group_system,1,1,1,1
+access_marketplace_push_config_manager,marketplace.push.config manager,model_marketplace_push_config,base.group_system,1,1,1,1
