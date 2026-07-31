@@ -228,12 +228,12 @@ class TnInstance(models.Model):
 
         webhook_url = self.webhook_url
         events = [
-            'orders/paid',
-            'orders/created',
-            'orders/cancelled',
-            'products/created',
-            'products/updated',
-            'products/deleted',
+            'order/paid',
+            'order/created',
+            'order/cancelled',
+            'product/created',
+            'product/updated',
+            'product/deleted',
         ]
 
         registered_ids = []
