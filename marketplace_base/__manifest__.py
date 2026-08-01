@@ -1,6 +1,6 @@
 {
     'name': 'Marketplace Connector Base',
-    'version': '18.0.1.2.0',
+    'version': '18.0.1.3.0',
     'category': 'Sales',
     'summary': 'Base común para conectores de marketplaces: log de sincronización',
     'description': """
@@ -10,12 +10,13 @@ Base común para los conectores de marketplaces de aceleradora.la.
 * Reintento de pedidos fallidos desde el payload original guardado
 * Limpieza automática de registros antiguos
 * Aviso en tiempo real a Acelio al validar la entrega de un pedido de marketplace
+* Aviso en tiempo real a Acelio al publicar la factura de un pedido de marketplace
     """,
     'author': 'aceleradora.la',
     'maintainer': 'aceleradora.la',
     'website': 'https://aceleradora.la',
     'license': 'AGPL-3',
-    'depends': ['base', 'mail', 'product', 'stock', 'sale_stock'],
+    'depends': ['base', 'mail', 'product', 'stock', 'sale_stock', 'account'],
     'data': [
         'security/ir.model.access.csv',
         'data/ir_cron.xml',

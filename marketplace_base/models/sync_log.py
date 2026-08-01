@@ -30,6 +30,7 @@ class MarketplaceSyncLog(models.Model):
         ('stock_sync', 'Sync stock/precio'),
         ('publish', 'Publicación'),
         ('fulfillment', 'Notificación de envío'),
+        ('invoice', 'Notificación de factura'),
         ('import', 'Importación'),
         ('other', 'Otro'),
     ], required=True, default='other', index=True)
