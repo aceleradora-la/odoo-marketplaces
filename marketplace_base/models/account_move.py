@@ -48,6 +48,12 @@ class AccountMove(models.Model):
     Se engancha en `_post` y no en `write`: `state` lo escribe el propio `_post`
     y hay varios caminos (wizard de facturación, botón, cron de suscripciones)
     que terminan ahí. Es el único punto por el que pasan todas las facturas.
+
+    Solo se avisan facturas PUBLICADAS. Una en borrador no le sirve a nadie: no
+    tiene número fiscal, su total puede cambiar y no hay nada que subir a un
+    canal. `_post` devuelve únicamente los asientos que publicó —los de fecha
+    futura quedan en borrador con auto_post y no entran— y _marketplace_channel
+    vuelve a exigir state == 'posted'.
     """
     _inherit = 'account.move'
 
@@ -120,6 +126,10 @@ class AccountMove(models.Model):
             'event': 'invoice',
             'invoice_id': self.id,
             'invoice_name': self.name or '',
+            # Siempre 'posted': el aviso sale de _post y _marketplace_channel
+            # descarta cualquier otro estado. Viaja para que Acelio lo pueda
+            # verificar en vez de confiar, y para que quede en el log.
+            'state': self.state,
             'move_type': self.move_type,
             'document_number': document_number,
             'sale_order_id': order.id,
