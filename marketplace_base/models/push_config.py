@@ -23,6 +23,9 @@ ACELIO_REF_PREFIXES = {
 
 PUSH_TIMEOUT = 5  # segundos: la notificación nunca puede colgar una validación
 
+# Ruta del receptor en Acelio (src/app/api/sync/webhooks/odoo/route.ts).
+ACELIO_WEBHOOK_PATH = '/api/sync/webhooks/odoo'
+
 
 def acelio_sign(secret, body):
     """HMAC-SHA256 hex del cuerpo exacto que se envía."""
@@ -64,9 +67,10 @@ class MarketplacePushConfig(models.Model):
     """
     Configuración del aviso en tiempo real hacia Acelio (una fila por compañía).
 
-    Acelio hoy detecta la validación de la entrega por polling. Con esta config
-    Odoo le avisa apenas el picking pasa a 'done', y el despacho se notifica al
-    marketplace en el momento en vez de esperar al próximo ciclo del scheduler.
+    Acelio detecta por polling la validación de la entrega y la publicación de
+    la factura. Con esta config Odoo le avisa en el momento —apenas el picking
+    pasa a 'done' o se publica el asiento— y el canal se entera sin esperar al
+    próximo ciclo del scheduler.
     """
     _name = 'marketplace.push.config'
     _description = 'Notificaciones a Acelio'
@@ -81,7 +85,9 @@ class MarketplacePushConfig(models.Model):
         help='Si está desactivado, Odoo no envía nada y Acelio sigue detectando por polling.',
     )
     acelio_webhook_url = fields.Char(
-        'URL del webhook', help='La copiás de Acelio: Sync → Configuración de la conexión.',
+        'URL del webhook',
+        help='La copiás de Acelio: Sync → Configuración de la conexión, tarjeta '
+             '"Avisos desde Odoo". Termina en /api/sync/webhooks/odoo.',
     )
     acelio_tenant = fields.Char(
         'Cuenta en Acelio', help='Identificador (slug) de tu cuenta de Acelio. También lo copiás de ahí.',
@@ -95,6 +101,23 @@ class MarketplacePushConfig(models.Model):
     ], string='Último aviso', readonly=True)
     last_push_date = fields.Datetime('Fecha del último aviso', readonly=True)
     last_push_message = fields.Char('Detalle del último aviso', readonly=True)
+
+    @api.constrains('acelio_webhook_url')
+    def _check_webhook_url(self):
+        """
+        Es fácil pegar acá la URL de conexión del marketplace en vez de la del
+        aviso: son vecinas en la pantalla de Acelio y el error que devuelve es
+        un 405 que no explica nada. La ruta correcta siempre termina igual.
+        """
+        for rec in self:
+            url = (rec.acelio_webhook_url or '').strip().rstrip('/')
+            if url and not url.endswith(ACELIO_WEBHOOK_PATH):
+                raise ValidationError(_(
+                    "La URL del webhook tiene que terminar en %s.\n\n"
+                    "Copiala de Acelio: Sync → Configuración de la conexión → tarjeta "
+                    "'Avisos desde Odoo'. No es la misma URL con la que conectás "
+                    "el marketplace."
+                ) % ACELIO_WEBHOOK_PATH)
 
     @api.constrains('company_id')
     def _check_unique_company(self):

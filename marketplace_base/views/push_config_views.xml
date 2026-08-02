@@ -33,10 +33,12 @@
                         <field name="last_push_message" nolabel="1" readonly="1"/>
                     </group>
                     <div class="alert alert-info" role="alert">
-                        En Acelio entrá a <b>Sync → Configuración → la conexión de Tiendanube</b> y copiá
-                        de la tarjeta "Aviso de entregas desde Odoo" la URL, la cuenta y el secreto.
-                        Con esto, al validar una entrega Odoo le avisa a Acelio en el momento y el
-                        despacho se informa al marketplace sin esperar la sincronización periódica.
+                        En Acelio entrá a <b>Sync → Configuración → la conexión</b>, desplegá la tarjeta
+                        <b>"Avisos desde Odoo"</b> y copiá de ahí la URL, la cuenta y el secreto.
+                        La URL termina siempre en <code>/api/sync/webhooks/odoo</code>: no es la misma
+                        que la de conexión del marketplace.
+                        Con esto, al validar una entrega o publicar una factura Odoo le avisa a Acelio
+                        en el momento, sin esperar la sincronización periódica.
                     </div>
                 </sheet>
             </form>
