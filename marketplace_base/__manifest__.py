@@ -1,6 +1,6 @@
 {
     'name': 'Marketplace Connector Base',
-    'version': '19.0.1.3.1',
+    'version': '19.0.1.3.2',
     'category': 'Sales',
     'summary': 'Base común para conectores de marketplaces: log de sincronización',
     'description': """
